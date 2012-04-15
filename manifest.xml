@@ -1,0 +1,13 @@
+<package>
+  <description brief="orcdchomp">
+     orcdchomp
+  </description>
+  <author>Chris Dellinpr account</author>
+  <depend package="openrave"/>
+  <export>
+    <!--<env var="OPENRAVE_PLUGINS" append=":${prefix}/lib"/>-->
+    <python path="ENV/OPENRAVE_PLUGINS+=\x3A${prefix}/lib"/> <!-- literal \x3A turned into a : -->
+  </export>
+</package>
+
+
