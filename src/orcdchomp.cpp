@@ -38,12 +38,14 @@ public:
    EnvironmentBasePtr e; /* filled on module creation */
    cd_grid * g_sdf;
    
+   bool viewspheres(ostream& sout, istream& sinput);
    bool computedistancefield(ostream& sout, istream& sinput);
    bool runchomp(ostream& sout, istream& sinput);
 
    orcdchomp(EnvironmentBasePtr penv) : ModuleBase(penv)
    {
       __description = "orcdchomp: implement chomp using libcd";
+      RegisterCommand("viewspheres",boost::bind(&orcdchomp::viewspheres,this,_1,_2),"view spheres");
       RegisterCommand("computedistancefield",boost::bind(&orcdchomp::computedistancefield,this,_1,_2),"compute distance field");
       RegisterCommand("runchomp",boost::bind(&orcdchomp::runchomp,this,_1,_2),"run chomp");
       this->e = penv;
@@ -179,6 +181,132 @@ int replace_1_to_0(double * val, void * rptr)
  * module commands
  */
 
+struct sphere
+{
+   char linkname[32];
+   int linkindex; /* solved for on init */
+   double pos[3];
+   double radius;
+   
+};
+
+#if 0
+/* default openrave wam7 */
+static struct sphere spheres[] =
+{
+   /* shoulder spheres */
+   {"wam0", -1, {0.22, 0.14, 0.346}, 0.15},
+   /* upper arm spheres */
+   {"wam2", -1, {0.0, -0.20, 0.0}, 0.06},
+   {"wam2", -1, {0.0, -0.30, 0.0}, 0.06},
+   {"wam2", -1, {0.0, -0.40, 0.0}, 0.06},
+   {"wam2", -1, {0.0, -0.50, 0.0}, 0.06},
+   /* elbow knuckle spheres */
+   {"wam3", -1, {0.045, 0.0, 0.55}, 0.06},
+   /* forearm spheres */
+   {"wam4", -1, {-0.045, -0.2, 0.0}, 0.06},
+   {"wam4", -1, {-0.045, -0.1, 0.0}, 0.06},
+   {"wam4", -1, {-0.045, -0.3, 0.0}, 0.06},
+   /* hand sphere */
+   {"wam6", -1, {0.0, -0.06-0.04, 0.0}, 0.06},
+   /* finger spheres (inner links) */
+   {"Finger0-1", -1, { 0.05, -0.01, 0.0}, 0.04},
+   {"Finger1-1", -1, { 0.05, -0.01, 0.0}, 0.04},
+   {"Finger2-1", -1, { 0.05, -0.01, 0.0}, 0.04},
+   /* finger spheres (tip links) */
+   {"Finger0-2", -1, { 0.05, 0.0, 0.0}, 0.04},
+   {"Finger1-2", -1, { 0.05, 0.0, 0.0}, 0.04},
+   {"Finger2-2", -1, { 0.05, 0.0, 0.0}, 0.04}
+};
+#endif
+
+/* herb2 */
+static struct sphere spheres[] =
+{
+   /* shoulder spheres */
+   {"/right/wam0", -1, {0.0, 0.0, 0.0}, 0.15},
+   /* upper arm spheres */
+   {"/right/wam2", -1, {0.0, -0.20, 0.0}, 0.06},
+   {"/right/wam2", -1, {0.0, -0.30, 0.0}, 0.06},
+   {"/right/wam2", -1, {0.0, -0.40, 0.0}, 0.06},
+   {"/right/wam2", -1, {0.0, -0.50, 0.0}, 0.06},
+   /* elbow knuckle spheres */
+   {"/right/wam3", -1, {0.045, 0.0, 0.55}, 0.06},
+   /* forearm spheres */
+   {"/right/wam4", -1, {-0.045, -0.2, 0.0}, 0.06},
+   {"/right/wam4", -1, {-0.045, -0.1, 0.0}, 0.06},
+   {"/right/wam4", -1, {-0.045, -0.3, 0.0}, 0.06},
+   /* hand sphere */
+   {"/right/wam6", -1, {0.0, -0.06-0.04, 0.0}, 0.06},
+   /* finger spheres (inner links) */
+   {"/right/finger0_1", -1, { 0.05, -0.01, 0.0}, 0.04},
+   {"/right/finger1_1", -1, { 0.05, -0.01, 0.0}, 0.04},
+   {"/right/finger2_1", -1, { 0.05, -0.01, 0.0}, 0.04},
+   /* finger spheres (tip links) */
+   {"/right/finger0_2", -1, { 0.05, 0.0, 0.0}, 0.04},
+   {"/right/finger1_2", -1, { 0.05, 0.0, 0.0}, 0.04},
+   {"/right/finger2_2", -1, { 0.05, 0.0, 0.0}, 0.04}
+};
+
+bool orcdchomp::viewspheres(ostream& sout, istream& sinput)
+{
+   int i;
+   EnvironmentMutex::scoped_lock lockenv(this->e->GetMutex());
+   RobotBasePtr r;
+   char buf[1024];
+   
+   /* parse arguments into robot */
+   {
+      char * in;
+      char * cur;
+      char buf[64];
+      int len;
+      in = str_from_istream(sinput);
+      if (!in) { RAVELOG_ERROR("Out of memory!\n"); return false; }
+      cur = in;
+      while (1)
+      {
+         if (strp_skipprefix(&cur, (char *)"robot"))
+         {
+            if (r.get()) { RAVELOG_ERROR("Only one robot can be passed!\n"); free(in); return false; }
+            sscanf(cur, " %s%n", buf, &len); cur += len;
+            r = this->e->GetRobot(buf)/*.get()*/;
+            if (!r.get()) { RAVELOG_ERROR("Could not find robot with name %s!\n",buf); free(in); return false; }
+            RAVELOG_INFO("Using robot %s.\n", r->GetName().c_str());
+            continue;
+         }
+         break;
+      }
+      if (cur[0]) RAVELOG_ERROR("remaining string: |%s|! continuing ...\n", cur);
+      free(in);
+   }
+   
+   /* check that we have everything */
+   if (!r.get()) { RAVELOG_ERROR("Did not pass all required args!\n"); return false; }
+   
+   /* add up the costs of each sphere */
+   for (i=0; i<(int)(sizeof(spheres)/sizeof(spheres[0])); i++)
+   {
+      /* make some sweet spheres! */
+      OpenRAVE::KinBodyPtr s = OpenRAVE::RaveCreateKinBody(this->e);
+      sprintf(buf, "orcdchomp_sphere_%d", i);
+      s->SetName(buf);
+      /* set its dimensions */
+      {
+         std::vector< OpenRAVE::Vector > svec;
+         Transform t = r->GetLink(spheres[i].linkname)->GetTransform();
+         OpenRAVE::Vector v = t * OpenRAVE::Vector(spheres[i].pos); /* copies 3 values */
+         v.w = spheres[i].radius; /* radius */
+         svec.push_back(v);
+         s->InitFromSpheres(svec, true);
+      }
+      /* add the sphere */
+      this->e->AddKinBody(s);
+   }
+   
+   return true;
+}
+
 /* computedistancefield robot Herb2
  * computes a distance field in the vicinity of the passed robot
  * */
@@ -312,42 +440,6 @@ struct cost_helper
    EnvironmentBasePtr e;
 };
 
-struct sphere
-{
-   char linkname[32];
-   int linkindex; /* solved for on init */
-   double pos[3];
-   double radius;
-   
-};
-
-static struct sphere spheres[] =
-{
-   /* shoulder spheres */
-   {"wam0", -1, {0.22, 0.14, 0.346}, 0.15},
-   /* upper arm spheres */
-   {"wam2", -1, {0.0, -0.20, 0.0}, 0.06},
-   {"wam2", -1, {0.0, -0.30, 0.0}, 0.06},
-   {"wam2", -1, {0.0, -0.40, 0.0}, 0.06},
-   {"wam2", -1, {0.0, -0.50, 0.0}, 0.06},
-   /* elbow knuckle spheres */
-   {"wam3", -1, {0.045, 0.0, 0.55}, 0.06},
-   /* forearm spheres */
-   {"wam4", -1, {-0.045, -0.2, 0.0}, 0.06},
-   {"wam4", -1, {-0.045, -0.1, 0.0}, 0.06},
-   {"wam4", -1, {-0.045, -0.3, 0.0}, 0.06},
-   /* hand sphere */
-   {"wam6", -1, {0.0, -0.06-0.04, 0.0}, 0.06},
-   /* finger spheres (inner links) */
-   {"Finger0-1", -1, { 0.05, -0.01, 0.0}, 0.04},
-   {"Finger1-1", -1, { 0.05, -0.01, 0.0}, 0.04},
-   {"Finger2-1", -1, { 0.05, -0.01, 0.0}, 0.04},
-   /* finger spheres (tip links) */
-   {"Finger0-2", -1, { 0.05, 0.0, 0.0}, 0.04},
-   {"Finger1-2", -1, { 0.05, 0.0, 0.0}, 0.04},
-   {"Finger2-2", -1, { 0.05, 0.0, 0.0}, 0.04}
-};
-
 /* cost over a bunch of body points */
 int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double * costp)
 {
@@ -363,28 +455,6 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
    /* put the robot in the config */
    std::vector<dReal> vec(c_point, c_point+h->n);
    h->r->SetActiveDOFValues(vec);
-   
-#if 0
-   /* add up the costs of each sphere */
-   for (i=0; i<sizeof(spheres)/sizeof(spheres[0]); i++)
-   {
-      /* make some sweet spheres! */
-      OpenRAVE::KinBodyPtr s = OpenRAVE::RaveCreateKinBody(h->e);
-      sprintf(buf, "sphere_%d", i);
-      s->SetName(buf);
-      /* set its dimensions */
-      {
-         std::vector< OpenRAVE::Vector > svec;
-         Transform t = h->r->GetLink(spheres[i].linkname)->GetTransform();
-         OpenRAVE::Vector v = t * OpenRAVE::Vector(spheres[i].pos); /* copies 3 values */
-         v.w = spheres[i].radius; /* radius */
-         svec.push_back(v);
-         s->InitFromSpheres(svec, true);
-      }
-      /* add the sphere */
-      h->e->AddKinBody(s);
-   }
-#endif
 
    cost = 0.0;
    
@@ -716,7 +786,12 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
    printf("done!\n");
    
    printf("smoothing trajectory ...\n");
+#if OPENRAVE_VERSION >= OPENRAVE_VERSION_COMBINED(0,7,0)
+   /* new openrave added a fmaxaccelmult parameter (number 5) */
+   OpenRAVE::planningutils::RetimeActiveDOFTrajectory(t,r,false,0.2,0.2,"","");
+#else
    OpenRAVE::planningutils::RetimeActiveDOFTrajectory(t,r,false,0.2,"","");
+#endif
    printf("done!\n");
    
    printf("serializing trajectory ...\n");
