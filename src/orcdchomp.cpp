@@ -21,7 +21,7 @@ extern "C" {
 #define N_INTPOINTS (99)
 
 #define EPSILON (0.1) /* in meters */
-#define OBS_FACTOR (1.0)
+#define OBS_FACTOR (30.0)
 
 using namespace std;
 using namespace OpenRAVE;
@@ -515,6 +515,7 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
    int si;
    int i;
    int j;
+   int iter;
    int err;
    EnvironmentMutex::scoped_lock lockenv;
    RobotBasePtr r;
@@ -523,6 +524,10 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
    int * adofindices;
    struct cd_chomp * c;
    struct cost_helper h;
+   double * Gjlimit;
+   double * GjlimitAinv;
+   std::vector< dReal > vec_jlimit_lower;
+   std::vector< dReal > vec_jlimit_upper;
    
    /* lock environment */
    lockenv = EnvironmentMutex::scoped_lock(this->e->GetMutex());
@@ -590,6 +595,10 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
          adofindices[i] = vec[i];
    }
    
+   Gjlimit = (double *) malloc(N_INTPOINTS * n_adofgoal * sizeof(double));
+   GjlimitAinv = (double *) malloc(N_INTPOINTS * n_adofgoal * sizeof(double));
+   r->GetDOFLimits(vec_jlimit_lower, vec_jlimit_upper);
+   
    /* compute sphere link indices */
    for (si=0; si<(int)(sizeof(spheres)/sizeof(spheres[0])); si++)
       spheres[si].linkindex = r->GetLink(spheres[si].linkname)->GetIndex();
@@ -606,7 +615,7 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
    err = cd_chomp_create(&c, n_adofgoal, N_INTPOINTS, 1, &h,
       (int (*)(void *, double *, double *, double *))sphere_cost,
       (int (*)(void *, double *, double *, double *))sphere_cost_grad);
-   if (err) { RAVELOG_ERROR("Error creating chomp instance.\n"); free(h.J); free(adofgoal); free(adofindices); return false; }
+   if (err) { RAVELOG_ERROR("Error creating chomp instance.\n"); free(Gjlimit); free(GjlimitAinv); free(h.J); free(adofgoal); free(adofindices); return false; }
    /*c->lambda = 1000000.0;*/
    c->lambda = 5.0;
    /* this parameter affects how fast things settle;
@@ -636,17 +645,61 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
    
    /* Initialize CHOMP */
    err = cd_chomp_init(c);
-   if (err) { RAVELOG_ERROR("Error initializing chomp instance.\n"); free(h.J); free(adofindices); cd_chomp_destroy(c); return false; }
+   if (err) { RAVELOG_ERROR("Error initializing chomp instance.\n"); free(Gjlimit); free(GjlimitAinv); free(h.J); free(adofindices); cd_chomp_destroy(c); return false; }
    
    printf("iterating CHOMP once ...\n");
-   for (i=0; i<10; i++)
+   for (iter=0; iter<100; iter++)
    {
       double cost_total;
       double cost_obs;
       double cost_smooth;
       cd_chomp_cost(c, &cost_total, &cost_obs, &cost_smooth);
-      printf("iter:%2d cost_total:%f cost_obs:%f cost_smooth:%f\n", i, cost_total, cost_obs, cost_smooth);
+      printf("iter:%2d cost_total:%f cost_obs:%f cost_smooth:%f\n", iter, cost_total, cost_obs, cost_smooth);
       cd_chomp_iterate(c);
+      
+      /* handle joint limits */
+      while (1)
+      {
+         double largest_violation;
+         size_t largest_idx;
+         
+         /* find largest violation, and build Gjlimit matrix */
+         largest_violation = 0.0;
+         largest_idx = 0;
+         cd_mat_set_zero(Gjlimit, c->m, c->n);
+         for (i=0; i<c->m; i++)
+         for (j=0; j<c->n; j++)
+         {
+            if (c->T_points[i][j] < vec_jlimit_lower[adofindices[j]])
+            {
+               Gjlimit[i*c->n+j] = vec_jlimit_lower[adofindices[j]] - c->T_points[i][j];
+               if (fabs(Gjlimit[i*c->n+j]) > largest_violation)
+               {
+                  largest_violation = fabs(Gjlimit[i*c->n+j]);
+                  largest_idx = i*c->n+j;
+               }
+            }
+            if (c->T_points[i][j] > vec_jlimit_upper[adofindices[j]])
+            {
+               Gjlimit[i*c->n+j] = vec_jlimit_upper[adofindices[j]] - c->T_points[i][j];
+               if (fabs(Gjlimit[i*c->n+j]) > largest_violation)
+               {
+                  largest_violation = fabs(Gjlimit[i*c->n+j]);
+                  largest_idx = i*c->n+j;
+               }
+            }
+         }
+         if (largest_violation == 0.0) break;
+         
+         /* pre-multiply by Ainv */
+         cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, c->m, c->n, c->m,
+            1.0, c->Ainv,c->m, Gjlimit,c->n, 0.0, GjlimitAinv,c->n);
+            
+         /* compute scalar necessary to make trajectory satisfy limit at largest_idx */
+         cblas_daxpy(c->m * c->n,
+                     1.01 * Gjlimit[largest_idx] / GjlimitAinv[largest_idx],
+                     GjlimitAinv,1, c->T,1);
+      }
    }
    
    printf("done!\n");
@@ -663,8 +716,7 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
    printf("done!\n");
    
    printf("smoothing trajectory ...\n");
-   /*planningutils::SmoothActiveDOFTrajectory(t,r);*/
-   OpenRAVE::planningutils::RetimeActiveDOFTrajectory(t,r,false,1.0,"","");
+   OpenRAVE::planningutils::RetimeActiveDOFTrajectory(t,r,false,0.2,"","");
    printf("done!\n");
    
    printf("serializing trajectory ...\n");
@@ -673,6 +725,8 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
    
    cd_chomp_destroy(c);
    
+   free(GjlimitAinv);
+   free(Gjlimit);
    free(h.J);
    free(adofindices);
    return true;
