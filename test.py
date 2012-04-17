@@ -22,6 +22,7 @@ r.SetActiveManipulator('arm')
 m = r.GetActiveManipulator()
 r.SetActiveDOFs(m.GetArmIndices())
 
+# Create the module
 libprrave.rave.load_module(e, 'orcdchomp', 'blah_load_string')
 
 r.SetActiveDOFValues([-0.5,1.0,0.0,2.0,0.0,-1.0,0.0])
@@ -37,13 +38,13 @@ Tbox[0:3,3] = [0.6, 0.0, -0.25]
 box.SetTransform(Tbox)
 
 # Disable the robot from collision checking while computing distance field 
-#raw_input('Press [Enter] compute distance field ...')
+raw_input('Press [Enter] compute distance field ...')
 r.Enable(False)
 libprrave.rave.get_module(e,'orcdchomp').SendCommand(
    'computedistancefield robot BarrettWAM')
 r.Enable(True)
 
-#raw_input('Press [Enter] run chomp ...')
+raw_input('Press [Enter] run chomp ...')
 t_data = libprrave.rave.get_module(e,'orcdchomp').SendCommand(
    'runchomp robot BarrettWAM adofgoal 7 0.5 1.0 0.0 2.0 0.0 -1.0 0.0')
 t = openravepy.RaveCreateTrajectory(e,'').deserialize(t_data)

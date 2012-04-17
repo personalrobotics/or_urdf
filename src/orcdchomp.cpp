@@ -20,8 +20,8 @@ extern "C" {
 
 #define N_INTPOINTS (99)
 
-#define EPSILON (0.05) /* in meters */
-#define OBS_FACTOR (0.001)
+#define EPSILON (0.1) /* in meters */
+#define OBS_FACTOR (1.0)
 
 using namespace std;
 using namespace OpenRAVE;
@@ -323,7 +323,6 @@ struct sphere
 
 static struct sphere spheres[] =
 {
-#if 0
    /* shoulder spheres */
    {"wam0", -1, {0.22, 0.14, 0.346}, 0.15},
    /* upper arm spheres */
@@ -331,7 +330,6 @@ static struct sphere spheres[] =
    {"wam2", -1, {0.0, -0.30, 0.0}, 0.06},
    {"wam2", -1, {0.0, -0.40, 0.0}, 0.06},
    {"wam2", -1, {0.0, -0.50, 0.0}, 0.06},
-#endif
    /* elbow knuckle spheres */
    {"wam3", -1, {0.045, 0.0, 0.55}, 0.06},
    /* forearm spheres */
@@ -351,15 +349,19 @@ static struct sphere spheres[] =
 };
 
 /* cost over a bunch of body points */
-int sphere_cost(struct cost_helper * h, double * point, double * costp)
+int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double * costp)
 {
+   int i;
+   int j;
    int si;
+   double x_vel[3];
    double g_point[3];
    double dist;
    double cost;
+   double cost_sphere;
    
    /* put the robot in the config */
-   std::vector<dReal> vec(point, point+h->n);
+   std::vector<dReal> vec(c_point, c_point+h->n);
    h->r->SetActiveDOFValues(vec);
    
 #if 0
@@ -391,6 +393,18 @@ int sphere_cost(struct cost_helper * h, double * point, double * costp)
       /* get sphere center */
       Transform t = h->r->GetLink(spheres[si].linkname)->GetTransform();
       OpenRAVE::Vector v = t * OpenRAVE::Vector(spheres[si].pos); /* copies 3 values */
+      
+      /* compute the manipulator jacobian at this point, at this link */
+      boost::multi_array< dReal, 2 > orjacobian;
+      h->r->CalculateJacobian(spheres[si].linkindex, v, orjacobian);
+      /* copy the active columns of orjacobian into our J */
+      for (i=0; i<3; i++)
+         for (j=0; j<h->n; j++)
+            h->J[i*h->n+j] = orjacobian[i][h->adofindices[j]];
+      /* compute the current workspace velocity of the sphere */
+      cblas_dgemv(CblasRowMajor, CblasNoTrans, 3, h->n,
+         1.0, h->J,h->n, c_vel,1, 0.0, x_vel,1);
+      
       /* transform into grid frame */
       g_point[0] = v.x + 2.0;
       g_point[1] = v.y + 2.0;
@@ -401,10 +415,17 @@ int sphere_cost(struct cost_helper * h, double * point, double * costp)
       dist -= spheres[si].radius;
       /* convert to a cost */
       if (dist < 0.0)
-         cost += 0.5 * EPSILON - dist;
+         cost_sphere = 0.5 * EPSILON - dist;
       else if (dist < EPSILON)
-         cost += (0.5/EPSILON) * (dist-EPSILON) * (dist-EPSILON);
-      cost *= OBS_FACTOR;
+         cost_sphere = (0.5/EPSILON) * (dist-EPSILON) * (dist-EPSILON);
+      else
+         cost_sphere = 0.0;
+      cost_sphere *= OBS_FACTOR;
+      
+      /* scale by sphere velocity */
+      cost_sphere *= cblas_dnrm2(3, x_vel, 1);
+      
+      cost += cost_sphere;
    }
    
    *costp = cost;
@@ -422,6 +443,7 @@ int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, d
    double g_grad[3];
    double x_grad[3];
    double proj;
+   double x_vel2;
    
    /* put the robot in the config */
    std::vector<dReal> vec(c_point, c_point+h->n);
@@ -468,8 +490,12 @@ int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, d
       cd_mat_scale(x_grad, 3, 1, OBS_FACTOR);
       
       /* subtract from x_grad vector projection onto x_vel */
-      proj = cblas_ddot(3, x_grad,1, x_vel,1) / cblas_ddot(3, x_vel,1, x_vel,1);
-      cblas_daxpy(3, -proj, x_vel,1, x_grad,1);
+      x_vel2 = cblas_ddot(3, x_vel,1, x_vel,1);
+      if (x_vel2 > 0.000001)
+      {
+         proj = cblas_ddot(3, x_grad,1, x_vel,1) / x_vel2;
+         cblas_daxpy(3, -proj, x_vel,1, x_grad,1);
+      }
       
       /* multiply into c_grad through JT */
       cblas_dgemv(CblasRowMajor, CblasTrans, 3, h->n,
@@ -578,11 +604,11 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
    
    /* ok, ready to go! create a chomp solver */
    err = cd_chomp_create(&c, n_adofgoal, N_INTPOINTS, 1, &h,
-      (int (*)(void *, double *, double *))sphere_cost,
+      (int (*)(void *, double *, double *, double *))sphere_cost,
       (int (*)(void *, double *, double *, double *))sphere_cost_grad);
    if (err) { RAVELOG_ERROR("Error creating chomp instance.\n"); free(h.J); free(adofgoal); free(adofindices); return false; }
    /*c->lambda = 1000000.0;*/
-   c->lambda = 1.0e1;
+   c->lambda = 5.0;
    /* this parameter affects how fast things settle;
     * 1.0e1 ~ 90% smooth in ~10 iterations
     * bigger, means much slower convergence */
@@ -608,23 +634,18 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
    }
    free(adofgoal);
    
-   /*c->T_ext_points[N_INTPOINTS/2][1] -= 1.0;*/
-   
    /* Initialize CHOMP */
    err = cd_chomp_init(c);
    if (err) { RAVELOG_ERROR("Error initializing chomp instance.\n"); free(h.J); free(adofindices); cd_chomp_destroy(c); return false; }
-   c->wds[0] = 1.0; /* this parameter affects the cost, but not the rate of convergence. */
-   printf("current c->wds[0]: %f\n", c->wds[0]);
-   cd_chomp_init_recalc(c);
-   printf("current c->wds[0]: %f\n", c->wds[0]);
    
    printf("iterating CHOMP once ...\n");
    for (i=0; i<10; i++)
    {
+      double cost_total;
       double cost_obs;
       double cost_smooth;
-      cd_chomp_cost(c, 0, &cost_obs, &cost_smooth);
-      printf("iter:%2d cost_obs:%f cost_smooth:%g\n", i, cost_obs, cost_smooth);
+      cd_chomp_cost(c, &cost_total, &cost_obs, &cost_smooth);
+      printf("iter:%2d cost_total:%f cost_obs:%f cost_smooth:%f\n", i, cost_total, cost_obs, cost_smooth);
       cd_chomp_iterate(c);
    }
    
