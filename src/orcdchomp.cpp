@@ -2,6 +2,7 @@
 #include <cstring>
 #include <boost/bind.hpp>
 #include <cblas.h>
+#include <openrave/config.h>
 #include <openrave/openrave.h>
 #include <openrave/planningutils.h>
 #include <openrave/plugin.h>
@@ -25,58 +26,214 @@ extern "C" {
 #define OBS_FACTOR (30.0)
 #define OBS_FACTOR_SELF (10.0)
 
-using namespace std;
 using namespace OpenRAVE;
+
+#if 0
+/* default openrave wam7 */
+static struct sphere spheres[] =
+{
+   /* shoulder spheres */
+   {"wam0", -1, {0.22, 0.14, 0.346}, 0.15},
+   /* upper arm spheres */
+   {"wam2", -1, {0.0, -0.20, 0.0}, 0.06},
+   {"wam2", -1, {0.0, -0.30, 0.0}, 0.06},
+   {"wam2", -1, {0.0, -0.40, 0.0}, 0.06},
+   {"wam2", -1, {0.0, -0.50, 0.0}, 0.06},
+   /* elbow knuckle spheres */
+   {"wam3", -1, {0.045, 0.0, 0.55}, 0.06},
+   /* forearm spheres */
+   {"wam4", -1, {-0.045, -0.2, 0.0}, 0.06},
+   {"wam4", -1, {-0.045, -0.1, 0.0}, 0.06},
+   {"wam4", -1, {-0.045, -0.3, 0.0}, 0.06},
+   /* hand sphere */
+   {"wam6", -1, {0.0, -0.06-0.04, 0.0}, 0.06},
+   /* finger spheres (inner links) */
+   {"Finger0-1", -1, { 0.05, -0.01, 0.0}, 0.04},
+   {"Finger1-1", -1, { 0.05, -0.01, 0.0}, 0.04},
+   {"Finger2-1", -1, { 0.05, -0.01, 0.0}, 0.04},
+   /* finger spheres (tip links) */
+   {"Finger0-2", -1, { 0.05, 0.0, 0.0}, 0.04},
+   {"Finger1-2", -1, { 0.05, 0.0, 0.0}, 0.04},
+   {"Finger2-2", -1, { 0.05, 0.0, 0.0}, 0.04}
+};
+#endif
 
 
 /* ======================================================================== *
- * module skeleton, openrave integration
+ * type definitions, module skeleton, things exposed to openrave
  */
 
+namespace {
+
+struct sphere
+{
+   struct sphere * next;
+   /* parsed from xml */
+   char linkname[32];
+   double pos[3];
+   double radius;
+   /* solved for later */
+   int linkindex; /* solved for on init */
+};
+
+/* the robot-attached data class */
+class rdata : public XMLReadable
+{
+public:
+   rdata() : XMLReadable("orcdchomp") { this->spheres = 0; }
+   ~rdata()
+   {
+      struct sphere * s;
+      while (this->spheres)
+      {
+         s=this->spheres->next;
+         free(this->spheres);
+         this->spheres = s;
+      }
+   }
+   struct sphere * spheres;
+};
+
+/* the rdata-parser */
+class rdata_parser : public BaseXMLReader
+{
+public:
+   rdata_parser(boost::shared_ptr<rdata> passed_d, const AttributesList& atts)
+   {
+      /* save or construct the rdata object */
+      this->d = passed_d;
+      if(!this->d) this->d.reset(new rdata());
+      /* get ready */
+      this->inside_spheres = false;
+      
+      RAVELOG_INFO("the attributes orcdchomp is created with are:\n");
+      for(AttributesList::const_iterator itatt = atts.begin(); itatt != atts.end(); ++itatt)
+         RAVELOG_INFO("%s=%s\n",itatt->first.c_str(),itatt->second.c_str());
+   }
+
+   virtual XMLReadablePtr GetReadable() { return this->d; }
+
+   virtual ProcessElement startElement(const std::string& name, const AttributesList& atts)
+   {
+      if (name == "spheres")
+      {
+         if (this->inside_spheres) RAVELOG_ERROR("you can't have <spheres> inside <spheres>!\n");
+         this->inside_spheres = true;
+         return PE_Support;
+      }
+      if (name == "sphere")
+      {
+         struct sphere * s;
+         if (!this->inside_spheres) { RAVELOG_ERROR("you can't have <sphere> not inside <spheres>!\n"); return PE_Pass; }
+         s = (struct sphere *) malloc(sizeof(struct sphere));
+         for(AttributesList::const_iterator itatt = atts.begin(); itatt != atts.end(); ++itatt)
+         {
+            if (itatt->first=="link")
+               strcpy(s->linkname, itatt->second.c_str());
+            else if (itatt->first=="radius")
+               s->radius = strtod(itatt->second.c_str(), 0);
+            else if (itatt->first=="pos")
+               sscanf(itatt->second.c_str(), "%lf %lf %lf", &s->pos[0], &s->pos[1], &s->pos[2]);
+            else
+               RAVELOG_ERROR("unknown attribute %s=%s!\n",itatt->first.c_str(),itatt->second.c_str());
+         }
+         /* insert at head of rdata list */
+         s->next = this->d->spheres;
+         this->d->spheres = s;
+         return PE_Support;
+      }
+      return PE_Pass;
+   }
+   
+   virtual void characters(const std::string& ch) { }
+   
+   virtual bool endElement(const std::string& name)
+   {
+      if (name == "orcdchomp") return true;
+      if (name == "spheres")
+      {
+         if (!this->inside_spheres) RAVELOG_ERROR("you can't have </spheres> without matching <spheres>!\n");
+         this->inside_spheres = false;
+      }
+      else if (name == "sphere")
+      {
+         if (!this->inside_spheres) RAVELOG_ERROR("you can't have </sphere> not inside <spheres>!\n");
+      }
+      else
+         RAVELOG_ERROR("unknown field %s\n", name.c_str());
+      return false;
+   }
+
+   boost::shared_ptr<rdata> d;
+   bool inside_spheres;
+};
+
 /* the module itself */
-class orcdchomp : public ModuleBase
+class mod : public ModuleBase
 {
 public:
    EnvironmentBasePtr e; /* filled on module creation */
    cd_grid * g_sdf;
    
-   bool viewspheres(ostream& sout, istream& sinput);
-   bool computedistancefield(ostream& sout, istream& sinput);
-   bool runchomp(ostream& sout, istream& sinput);
+   bool viewspheres(std::ostream& sout, std::istream& sinput);
+   bool computedistancefield(std::ostream& sout, std::istream& sinput);
+   bool runchomp(std::ostream& sout, std::istream& sinput);
 
-   orcdchomp(EnvironmentBasePtr penv) : ModuleBase(penv)
+   mod(EnvironmentBasePtr penv) : ModuleBase(penv)
    {
       __description = "orcdchomp: implement chomp using libcd";
-      RegisterCommand("viewspheres",boost::bind(&orcdchomp::viewspheres,this,_1,_2),"view spheres");
-      RegisterCommand("computedistancefield",boost::bind(&orcdchomp::computedistancefield,this,_1,_2),"compute distance field");
-      RegisterCommand("runchomp",boost::bind(&orcdchomp::runchomp,this,_1,_2),"run chomp");
+      RegisterCommand("viewspheres",boost::bind(&mod::viewspheres,this,_1,_2),"view spheres");
+      RegisterCommand("computedistancefield",boost::bind(&mod::computedistancefield,this,_1,_2),"compute distance field");
+      RegisterCommand("runchomp",boost::bind(&mod::runchomp,this,_1,_2),"run chomp");
       this->e = penv;
       this->g_sdf = 0;
    }
-   virtual ~orcdchomp() {}
+   virtual ~mod() {}
    void Destroy() { RAVELOG_INFO("module unloaded from environment\n"); }
    /* This is called on e.LoadProblem(m, 'command') */
-   int main(const string& cmd) { RAVELOG_INFO("module init cmd: %s\n", cmd.c_str()); return 0; }
+   int main(const std::string& cmd) { RAVELOG_INFO("module init cmd: %s\n", cmd.c_str()); return 0; }
 };
 
+} /* anonymous namespace */
+
+
+/* ======================================================================== *
+ * globals and direct openrave callables
+ */
+
+namespace {
+static boost::shared_ptr<void> reg_reader;
+static BaseXMLReaderPtr rdata_parser_maker(InterfaceBasePtr ptr, const AttributesList& atts)
+   { return BaseXMLReaderPtr(new rdata_parser(boost::shared_ptr<rdata>(),atts)); }
+}
+
 /* export as an openrave module */
+void GetPluginAttributesValidated(PLUGININFO& info)
+{ 
+   if(!reg_reader) reg_reader = RaveRegisterXMLReader(PT_Robot,"orcdchomp",rdata_parser_maker);
+   info.interfacenames[PT_Module].push_back("orcdchomp");
+}
 InterfaceBasePtr CreateInterfaceValidated(InterfaceType type, const std::string& interfacename, std::istream& sinput, EnvironmentBasePtr penv)
 {
-    if((type == PT_Module)&&(interfacename == "orcdchomp"))
-        return InterfaceBasePtr(new orcdchomp(penv));
-    return InterfaceBasePtr();
+   if((type == PT_Module)&&(interfacename == "orcdchomp"))
+      return InterfaceBasePtr(new mod(penv));
+   return InterfaceBasePtr();
 }
-void GetPluginAttributesValidated(PLUGININFO& info)
-   { info.interfacenames[PT_Module].push_back("orcdchomp"); }
 OPENRAVE_PLUGIN_API void DestroyPlugin()
    { RAVELOG_INFO("destroying plugin\n"); }
 
 
 /* ======================================================================== *
+ * implementation below!
+ */
+
+namespace {
+
+/* ======================================================================== *
  * useful utilities
  */
 
-char * str_from_istream(istream& sinput)
+char * str_from_istream(std::istream& sinput)
 {
    char * str;
    std::ostringstream oss;
@@ -183,79 +340,14 @@ int replace_1_to_0(double * val, void * rptr)
  * module commands
  */
 
-struct sphere
-{
-   char linkname[32];
-   int linkindex; /* solved for on init */
-   double pos[3];
-   double radius;
-   
-};
-
-#if 0
-/* default openrave wam7 */
-static struct sphere spheres[] =
-{
-   /* shoulder spheres */
-   {"wam0", -1, {0.22, 0.14, 0.346}, 0.15},
-   /* upper arm spheres */
-   {"wam2", -1, {0.0, -0.20, 0.0}, 0.06},
-   {"wam2", -1, {0.0, -0.30, 0.0}, 0.06},
-   {"wam2", -1, {0.0, -0.40, 0.0}, 0.06},
-   {"wam2", -1, {0.0, -0.50, 0.0}, 0.06},
-   /* elbow knuckle spheres */
-   {"wam3", -1, {0.045, 0.0, 0.55}, 0.06},
-   /* forearm spheres */
-   {"wam4", -1, {-0.045, -0.2, 0.0}, 0.06},
-   {"wam4", -1, {-0.045, -0.1, 0.0}, 0.06},
-   {"wam4", -1, {-0.045, -0.3, 0.0}, 0.06},
-   /* hand sphere */
-   {"wam6", -1, {0.0, -0.06-0.04, 0.0}, 0.06},
-   /* finger spheres (inner links) */
-   {"Finger0-1", -1, { 0.05, -0.01, 0.0}, 0.04},
-   {"Finger1-1", -1, { 0.05, -0.01, 0.0}, 0.04},
-   {"Finger2-1", -1, { 0.05, -0.01, 0.0}, 0.04},
-   /* finger spheres (tip links) */
-   {"Finger0-2", -1, { 0.05, 0.0, 0.0}, 0.04},
-   {"Finger1-2", -1, { 0.05, 0.0, 0.0}, 0.04},
-   {"Finger2-2", -1, { 0.05, 0.0, 0.0}, 0.04}
-};
-#endif
-
-/* herb2 */
-static struct sphere spheres[] =
-{
-   /* shoulder spheres */
-   {"/right/wam0", -1, {0.0, 0.0, 0.0}, 0.15},
-   /* upper arm spheres */
-   {"/right/wam2", -1, {0.0, -0.20, 0.0}, 0.06},
-   {"/right/wam2", -1, {0.0, -0.30, 0.0}, 0.06},
-   {"/right/wam2", -1, {0.0, -0.40, 0.0}, 0.06},
-   {"/right/wam2", -1, {0.0, -0.50, 0.0}, 0.06},
-   /* elbow knuckle spheres */
-   {"/right/wam3", -1, {0.045, 0.0, 0.55}, 0.06},
-   /* forearm spheres */
-   {"/right/wam4", -1, {-0.045, -0.2, 0.0}, 0.06},
-   {"/right/wam4", -1, {-0.045, -0.1, 0.0}, 0.06},
-   {"/right/wam4", -1, {-0.045, -0.3, 0.0}, 0.06},
-   /* hand sphere */
-   {"/right/wam6", -1, {0.0, -0.06-0.04, 0.0}, 0.06},
-   /* finger spheres (inner links) */
-   {"/right/finger0_1", -1, { 0.05, -0.01, 0.0}, 0.04},
-   {"/right/finger1_1", -1, { 0.05, -0.01, 0.0}, 0.04},
-   {"/right/finger2_1", -1, { 0.05, -0.01, 0.0}, 0.04},
-   /* finger spheres (tip links) */
-   {"/right/finger0_2", -1, { 0.05, 0.0, 0.0}, 0.04},
-   {"/right/finger1_2", -1, { 0.05, 0.0, 0.0}, 0.04},
-   {"/right/finger2_2", -1, { 0.05, 0.0, 0.0}, 0.04}
-};
-
-bool orcdchomp::viewspheres(ostream& sout, istream& sinput)
+bool mod::viewspheres(std::ostream& sout, std::istream& sinput)
 {
    int i;
    EnvironmentMutex::scoped_lock lockenv(this->e->GetMutex());
    RobotBasePtr r;
    char buf[1024];
+   struct sphere * s;
+   struct sphere * spheres;
    
    /* parse arguments into robot */
    {
@@ -286,24 +378,31 @@ bool orcdchomp::viewspheres(ostream& sout, istream& sinput)
    /* check that we have everything */
    if (!r.get()) { RAVELOG_ERROR("Did not pass all required args!\n"); return false; }
    
-   /* add up the costs of each sphere */
-   for (i=0; i<(int)(sizeof(spheres)/sizeof(spheres[0])); i++)
+   /* ensure the robot has spheres defined */
+   {
+      boost::shared_ptr<rdata> d = boost::dynamic_pointer_cast<rdata>(r->GetReadableInterface("orcdchomp"));
+      if (!d) { RAVELOG_ERROR("robot does not have a <orcdchomp> tag defined!\n"); return false; }
+      spheres = d->spheres;
+   }
+   
+   /* view each sphere */
+   for (s=spheres,i=0; s; s=s->next,i++)
    {
       /* make some sweet spheres! */
-      OpenRAVE::KinBodyPtr s = OpenRAVE::RaveCreateKinBody(this->e);
+      OpenRAVE::KinBodyPtr sbody = OpenRAVE::RaveCreateKinBody(this->e);
       sprintf(buf, "orcdchomp_sphere_%d", i);
-      s->SetName(buf);
+      sbody->SetName(buf);
       /* set its dimensions */
       {
          std::vector< OpenRAVE::Vector > svec;
-         Transform t = r->GetLink(spheres[i].linkname)->GetTransform();
-         OpenRAVE::Vector v = t * OpenRAVE::Vector(spheres[i].pos); /* copies 3 values */
-         v.w = spheres[i].radius; /* radius */
+         Transform t = r->GetLink(s->linkname)->GetTransform();
+         OpenRAVE::Vector v = t * OpenRAVE::Vector(s->pos); /* copies 3 values */
+         v.w = s->radius; /* radius */
          svec.push_back(v);
-         s->InitFromSpheres(svec, true);
+         sbody->InitFromSpheres(svec, true);
       }
       /* add the sphere */
-      this->e->AddKinBody(s);
+      this->e->AddKinBody(sbody);
    }
    
    return true;
@@ -312,7 +411,7 @@ bool orcdchomp::viewspheres(ostream& sout, istream& sinput)
 /* computedistancefield robot Herb2
  * computes a distance field in the vicinity of the passed robot
  * */
-bool orcdchomp::computedistancefield(ostream& sout, istream& sinput)
+bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
 {
    int err;
    EnvironmentMutex::scoped_lock lockenv;
@@ -430,12 +529,14 @@ bool orcdchomp::computedistancefield(ostream& sout, istream& sinput)
    return true;
 }
 
+
 struct cost_helper
 {
    int n; /* config space dimensionality */
    struct cd_grid * g_sdf;
    RobotBase * r;
    int * adofindices;
+   struct sphere * spheres;
    double * J; /* space for the jacobian; 3xn */
    double * J2;
    
@@ -448,13 +549,13 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
 {
    int i;
    int j;
-   int si;
-   int si2;
    double x_vel[3];
    double g_point[3];
    double dist;
    double cost;
    double cost_sphere;
+   struct sphere * s;
+   struct sphere * s2;
    
    /* put the robot in the config */
    std::vector<dReal> vec(c_point, c_point+h->n);
@@ -462,15 +563,15 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
 
    cost = 0.0;
    
-   for (si=0; si<(int)(sizeof(spheres)/sizeof(spheres[0])); si++)
+   for (s=h->spheres; s; s=s->next)
    {
       /* get sphere center */
-      Transform t = h->r->GetLink(spheres[si].linkname)->GetTransform();
-      OpenRAVE::Vector v = t * OpenRAVE::Vector(spheres[si].pos); /* copies 3 values */
+      Transform t = h->r->GetLink(s->linkname)->GetTransform();
+      OpenRAVE::Vector v = t * OpenRAVE::Vector(s->pos); /* copies 3 values */
       
       /* compute the manipulator jacobian at this point, at this link */
       boost::multi_array< dReal, 2 > orjacobian;
-      h->r->CalculateJacobian(spheres[si].linkindex, v, orjacobian);
+      h->r->CalculateJacobian(s->linkindex, v, orjacobian);
       /* copy the active columns of orjacobian into our J */
       for (i=0; i<3; i++)
          for (j=0; j<h->n; j++)
@@ -486,7 +587,7 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
       /* get sdf value (from interp) */
       cd_grid_double_interp(h->g_sdf, g_point, &dist);
       /* subtract radius to get distance of closest sphere point to closest obstacle */
-      dist -= spheres[si].radius;
+      dist -= s->radius;
       
       /* convert to a cost */
       if (dist < 0.0)
@@ -497,18 +598,18 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
          cost_sphere = 0.0;
       
       /* consider effects from all other spheres (i.e. self collision) */
-      for (si2=0; si2<(int)(sizeof(spheres)/sizeof(spheres[0])); si2++)
+      for (s2=h->spheres; s2; s2=s2->next)
       {
          /* skip spheres on the same link */
-         if (spheres[si].linkindex == spheres[si2].linkindex) continue;
+         if (s->linkindex == s2->linkindex) continue;
          
          /* skip spheres far enough away from us */
-         dist = spheres[si].radius + spheres[si2].radius + EPSILON_SELF;
-         OpenRAVE::Vector v_from_other = v - h->r->GetLink(spheres[si2].linkname)->GetTransform() * OpenRAVE::Vector(spheres[si2].pos);
+         dist = s->radius + s2->radius + EPSILON_SELF;
+         OpenRAVE::Vector v_from_other = v - h->r->GetLink(s2->linkname)->GetTransform() * OpenRAVE::Vector(s2->pos);
          if (v_from_other.lengthsqr3() > dist*dist) continue;
          
          /* compute the cost */
-         dist = sqrt(v_from_other.lengthsqr3()) - spheres[si].radius - spheres[si2].radius;
+         dist = sqrt(v_from_other.lengthsqr3()) - s->radius - s2->radius;
          if (dist < 0.0)
             cost_sphere += OBS_FACTOR_SELF * (0.5 * EPSILON_SELF - dist);
          else
@@ -526,8 +627,6 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
 
 int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, double * c_grad)
 {
-   int si;
-   int si2;
    int i;
    int j;
    double x_vel[3];
@@ -538,6 +637,8 @@ int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, d
    double proj;
    double x_vel2;
    boost::multi_array< dReal, 2 > orjacobian;
+   struct sphere * s;
+   struct sphere * s2;
    
    /* put the robot in the config */
    std::vector<dReal> vec(c_point, c_point+h->n);
@@ -546,14 +647,14 @@ int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, d
    /* start with a zero config-space gradient */
    cd_mat_set_zero(c_grad, h->n, 1);
    
-   for (si=0; si<(int)(sizeof(spheres)/sizeof(spheres[0])); si++)
+   for (s=h->spheres; s; s=s->next)
    {
       /* get sphere center */
-      Transform t = h->r->GetLink(spheres[si].linkname)->GetTransform();
-      OpenRAVE::Vector v = t * OpenRAVE::Vector(spheres[si].pos); /* copies 3 values */
+      Transform t = h->r->GetLink(s->linkname)->GetTransform();
+      OpenRAVE::Vector v = t * OpenRAVE::Vector(s->pos); /* copies 3 values */
 
       /* compute the manipulator jacobian at this point, at this link */
-      h->r->CalculateJacobian(spheres[si].linkindex, v, orjacobian);
+      h->r->CalculateJacobian(s->linkindex, v, orjacobian);
       /* copy the active columns of orjacobian into our J */
       for (i=0; i<3; i++)
          for (j=0; j<h->n; j++)
@@ -571,7 +672,7 @@ int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, d
       /* get sdf gradient */
       cd_grid_double_grad(h->g_sdf, g_point, g_grad); /* this will be a unit vector away from closest obs */
       /* subtract radius to get distance of closest sphere point to closest obstacle */
-      dist -= spheres[si].radius;
+      dist -= s->radius;
       /* convert sdf g_grad to x_grad (w.r.t. cost) according to dist */
       cd_mat_memcpy(x_grad, g_grad, 3, 1);
       if (dist < 0.0)
@@ -596,14 +697,14 @@ int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, d
 
 
       /* consider effects from all other spheres (i.e. self collision) */
-      for (si2=0; si2<(int)(sizeof(spheres)/sizeof(spheres[0])); si2++)
+      for (s2=h->spheres; s2; s2=s2->next)
       {
          /* skip spheres on the same link (their Js would be identical anyways) */
-         if (spheres[si].linkindex == spheres[si2].linkindex) continue;
+         if (s->linkindex == s2->linkindex) continue;
          
          /* skip spheres far enough away from us */
-         dist = spheres[si].radius + spheres[si2].radius + EPSILON_SELF;
-         OpenRAVE::Vector v_from_other = v - h->r->GetLink(spheres[si2].linkname)->GetTransform() * OpenRAVE::Vector(spheres[si2].pos);
+         dist = s->radius + s2->radius + EPSILON_SELF;
+         OpenRAVE::Vector v_from_other = v - h->r->GetLink(s2->linkname)->GetTransform() * OpenRAVE::Vector(s2->pos);
          if (v_from_other.lengthsqr3() > dist*dist) continue;
          
          /* make unit vector (g_grad) away from other sphere */
@@ -613,7 +714,7 @@ int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, d
          g_grad[2] = v_from_other[2] / dist;
          
          /* compute distance in collision */
-         dist -= spheres[si].radius - spheres[si2].radius;
+         dist -= s->radius - s2->radius;
          
          /* convert sdf g_grad to x_grad (w.r.t. cost) according to dist */
          cd_mat_memcpy(x_grad, g_grad, 3, 1);
@@ -633,7 +734,7 @@ int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, d
          
          /* J2 = J - jacobian of other sphere*/
          cd_mat_memcpy(h->J2, h->J, 3, h->n);
-         h->r->CalculateJacobian(spheres[si2].linkindex, v, orjacobian);
+         h->r->CalculateJacobian(s2->linkindex, v, orjacobian);
          for (i=0; i<3; i++)
             for (j=0; j<h->n; j++)
                h->J2[i*h->n+j] -= orjacobian[i][h->adofindices[j]];
@@ -653,9 +754,8 @@ int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, d
  * uses the active dofs of the passed robot
  * initialized with a straight-line trajectory
  * */
-bool orcdchomp::runchomp(ostream& sout, istream& sinput)
+bool mod::runchomp(std::ostream& sout, std::istream& sinput)
 {
-   int si;
    int i;
    int j;
    int iter;
@@ -671,6 +771,8 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
    double * GjlimitAinv;
    std::vector< dReal > vec_jlimit_lower;
    std::vector< dReal > vec_jlimit_upper;
+   struct sphere * s;
+   struct sphere * spheres;
    
    /* lock environment */
    lockenv = EnvironmentMutex::scoped_lock(this->e->GetMutex());
@@ -721,10 +823,15 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
    if (!r.get() || !adofgoal)
       { RAVELOG_ERROR("Did not pass all required args!\n"); free(adofgoal); return false; }
    
-#if 0
+   /* ensure the robot has spheres defined */
+   {
+      boost::shared_ptr<rdata> d = boost::dynamic_pointer_cast<rdata>(r->GetReadableInterface("orcdchomp"));
+      if (!d) { RAVELOG_ERROR("robot does not have a <orcdchomp> tag defined!\n"); free(adofgoal); return false; }
+      spheres = d->spheres;
+   }
+   
    if (!this->g_sdf)
       { RAVELOG_ERROR("A signed distance field has not yet been computed!\n"); free(adofgoal); return false; }
-#endif
    
    /* check that n_adofgoal matches active dof */
    if (n_adofgoal != r->GetActiveDOF())
@@ -743,12 +850,13 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
    r->GetDOFLimits(vec_jlimit_lower, vec_jlimit_upper);
    
    /* compute sphere link indices */
-   for (si=0; si<(int)(sizeof(spheres)/sizeof(spheres[0])); si++)
-      spheres[si].linkindex = r->GetLink(spheres[si].linkname)->GetIndex();
+   for (s=spheres; s; s=s->next)
+      s->linkindex = r->GetLink(s->linkname)->GetIndex();
    
    /* initialize the cost helper */
    h.n = n_adofgoal;
    h.r = r.get();
+   h.spheres = spheres;
    h.g_sdf = this->g_sdf;
    h.adofindices = adofindices;
    h.J = (double *) malloc(3*n_adofgoal*sizeof(double));
@@ -864,7 +972,7 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
    /* new openrave added a fmaxaccelmult parameter (number 5) */
    OpenRAVE::planningutils::RetimeActiveDOFTrajectory(t,r,false,0.2,0.2,"","");
 #else
-   OpenRAVE::planningutils::RetimeActiveDOFTrajectory(t,r,false,0.2,"","");
+   OpenRAVE::planningutils::RetimeActiveDOFTrajectory(t,r,false,0.2,"");
 #endif
    printf("done!\n");
    
@@ -881,3 +989,5 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
    free(adofindices);
    return true;
 }
+
+} /* anonymous namespace */
