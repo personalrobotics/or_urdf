@@ -19,19 +19,20 @@ e.SetViewer('qtcoin')
 e.Load('environments/intelkitchen_robotized_herb2.env.xml')
 
 # Set up the robot, ik, active manip, active dofs
-r = e.GetRobots()[0]
-libprrave.ik.loadfor(r)
-r.SetTransform(numpy.array(
-   [[ 0., 1., 0.,  0.1880 ],
-    [-1., 0., 0., -1.3748 ],
-    [ 0., 0., 1.,  0.     ],
-    [ 0., 0., 0.,  1.     ]]))
-r.SetDOFValues(numpy.array(
-   [  5.3, -1.8, -0.8,  2.4, -3.2,  0.0,  0.0952,  0.0, 0.0, 0.0, 0.0,
-      0.9, -1.9,  0.7,  2.4, -1.6,  0.0,  0.8,     1.6, 1.6, 1.6, 0.0  ]))
-r.SetActiveManipulator('right_wam')
-m = r.GetActiveManipulator()
-r.SetActiveDOFs(m.GetArmIndices())
+with e:
+   r = e.GetRobots()[0]
+   libprrave.ik.loadfor(r)
+   r.SetTransform(numpy.array(
+      [[ 0., 1., 0.,  0.1880 ],
+       [-1., 0., 0., -1.3748 ],
+       [ 0., 0., 1.,  0.     ],
+       [ 0., 0., 0.,  1.     ]]))
+   r.SetDOFValues(numpy.array(
+      [  5.3, -1.8, -0.8,  2.4, -3.2,  0.0,  0.0952,  0.0, 0.0, 0.0, 0.0,
+         0.9, -1.9,  0.7,  2.4, -1.6,  0.0,  0.8,     1.6, 1.6, 1.6, 0.0  ]))
+   r.SetActiveManipulator('right_wam')
+   m = r.GetActiveManipulator()
+   r.SetActiveDOFs(m.GetArmIndices())
 
 # Load the bottle
 e.Load('objects/household/fuze_bottle.kinbody.xml')

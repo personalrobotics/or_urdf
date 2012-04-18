@@ -21,7 +21,9 @@ extern "C" {
 #define N_INTPOINTS (99)
 
 #define EPSILON (0.1) /* in meters */
+#define EPSILON_SELF (0.04) /* in meters */
 #define OBS_FACTOR (30.0)
+#define OBS_FACTOR_SELF (10.0)
 
 using namespace std;
 using namespace OpenRAVE;
@@ -435,6 +437,7 @@ struct cost_helper
    RobotBase * r;
    int * adofindices;
    double * J; /* space for the jacobian; 3xn */
+   double * J2;
    
    /* ugh */
    EnvironmentBasePtr e;
@@ -446,6 +449,7 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
    int i;
    int j;
    int si;
+   int si2;
    double x_vel[3];
    double g_point[3];
    double dist;
@@ -483,18 +487,36 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
       cd_grid_double_interp(h->g_sdf, g_point, &dist);
       /* subtract radius to get distance of closest sphere point to closest obstacle */
       dist -= spheres[si].radius;
+      
       /* convert to a cost */
       if (dist < 0.0)
-         cost_sphere = 0.5 * EPSILON - dist;
+         cost_sphere = OBS_FACTOR * (0.5 * EPSILON - dist);
       else if (dist < EPSILON)
-         cost_sphere = (0.5/EPSILON) * (dist-EPSILON) * (dist-EPSILON);
+         cost_sphere = OBS_FACTOR * (0.5/EPSILON) * (dist-EPSILON) * (dist-EPSILON);
       else
          cost_sphere = 0.0;
-      cost_sphere *= OBS_FACTOR;
+      
+      /* consider effects from all other spheres (i.e. self collision) */
+      for (si2=0; si2<(int)(sizeof(spheres)/sizeof(spheres[0])); si2++)
+      {
+         /* skip spheres on the same link */
+         if (spheres[si].linkindex == spheres[si2].linkindex) continue;
+         
+         /* skip spheres far enough away from us */
+         dist = spheres[si].radius + spheres[si2].radius + EPSILON_SELF;
+         OpenRAVE::Vector v_from_other = v - h->r->GetLink(spheres[si2].linkname)->GetTransform() * OpenRAVE::Vector(spheres[si2].pos);
+         if (v_from_other.lengthsqr3() > dist*dist) continue;
+         
+         /* compute the cost */
+         dist = sqrt(v_from_other.lengthsqr3()) - spheres[si].radius - spheres[si2].radius;
+         if (dist < 0.0)
+            cost_sphere += OBS_FACTOR_SELF * (0.5 * EPSILON_SELF - dist);
+         else
+            cost_sphere += OBS_FACTOR_SELF * (0.5/EPSILON_SELF) * (dist-EPSILON_SELF) * (dist-EPSILON_SELF);
+      }
       
       /* scale by sphere velocity */
       cost_sphere *= cblas_dnrm2(3, x_vel, 1);
-      
       cost += cost_sphere;
    }
    
@@ -505,6 +527,7 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
 int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, double * c_grad)
 {
    int si;
+   int si2;
    int i;
    int j;
    double x_vel[3];
@@ -514,6 +537,7 @@ int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, d
    double x_grad[3];
    double proj;
    double x_vel2;
+   boost::multi_array< dReal, 2 > orjacobian;
    
    /* put the robot in the config */
    std::vector<dReal> vec(c_point, c_point+h->n);
@@ -529,7 +553,6 @@ int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, d
       OpenRAVE::Vector v = t * OpenRAVE::Vector(spheres[si].pos); /* copies 3 values */
 
       /* compute the manipulator jacobian at this point, at this link */
-      boost::multi_array< dReal, 2 > orjacobian;
       h->r->CalculateJacobian(spheres[si].linkindex, v, orjacobian);
       /* copy the active columns of orjacobian into our J */
       for (i=0; i<3; i++)
@@ -546,7 +569,7 @@ int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, d
       /* get sdf value (from interp) */
       cd_grid_double_interp(h->g_sdf, g_point, &dist);
       /* get sdf gradient */
-      cd_grid_double_grad(h->g_sdf, g_point, g_grad); /* this will be a unit vector to closest obs */
+      cd_grid_double_grad(h->g_sdf, g_point, g_grad); /* this will be a unit vector away from closest obs */
       /* subtract radius to get distance of closest sphere point to closest obstacle */
       dist -= spheres[si].radius;
       /* convert sdf g_grad to x_grad (w.r.t. cost) according to dist */
@@ -570,6 +593,56 @@ int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, d
       /* multiply into c_grad through JT */
       cblas_dgemv(CblasRowMajor, CblasTrans, 3, h->n,
          1.0, h->J,h->n, x_grad,1, 1.0, c_grad,1);
+
+
+      /* consider effects from all other spheres (i.e. self collision) */
+      for (si2=0; si2<(int)(sizeof(spheres)/sizeof(spheres[0])); si2++)
+      {
+         /* skip spheres on the same link (their Js would be identical anyways) */
+         if (spheres[si].linkindex == spheres[si2].linkindex) continue;
+         
+         /* skip spheres far enough away from us */
+         dist = spheres[si].radius + spheres[si2].radius + EPSILON_SELF;
+         OpenRAVE::Vector v_from_other = v - h->r->GetLink(spheres[si2].linkname)->GetTransform() * OpenRAVE::Vector(spheres[si2].pos);
+         if (v_from_other.lengthsqr3() > dist*dist) continue;
+         
+         /* make unit vector (g_grad) away from other sphere */
+         dist = sqrt(v_from_other.lengthsqr3());
+         g_grad[0] = v_from_other[0] / dist;
+         g_grad[1] = v_from_other[1] / dist;
+         g_grad[2] = v_from_other[2] / dist;
+         
+         /* compute distance in collision */
+         dist -= spheres[si].radius - spheres[si2].radius;
+         
+         /* convert sdf g_grad to x_grad (w.r.t. cost) according to dist */
+         cd_mat_memcpy(x_grad, g_grad, 3, 1);
+         if (dist < 0.0)
+            cd_mat_scale(x_grad, 3, 1, -1.0);
+         else if (dist < EPSILON_SELF)
+            cd_mat_scale(x_grad, 3, 1, dist/EPSILON_SELF - 1.0);
+         cd_mat_scale(x_grad, 3, 1, OBS_FACTOR_SELF);
+         
+         /* subtract from x_grad vector projection onto x_vel */
+         x_vel2 = cblas_ddot(3, x_vel,1, x_vel,1);
+         if (x_vel2 > 0.000001)
+         {
+            proj = cblas_ddot(3, x_grad,1, x_vel,1) / x_vel2;
+            cblas_daxpy(3, -proj, x_vel,1, x_grad,1);
+         }
+         
+         /* J2 = J - jacobian of other sphere*/
+         cd_mat_memcpy(h->J2, h->J, 3, h->n);
+         h->r->CalculateJacobian(spheres[si2].linkindex, v, orjacobian);
+         for (i=0; i<3; i++)
+            for (j=0; j<h->n; j++)
+               h->J2[i*h->n+j] -= orjacobian[i][h->adofindices[j]];
+         
+         /* multiply into c_grad through JT */
+         /* I HAVE NO IDEA WHY THERES A -1 HERE! */
+         cblas_dgemv(CblasRowMajor, CblasTrans, 3, h->n,
+            -1.0, h->J2,h->n, x_grad,1, 1.0, c_grad,1);
+      }
    }
    
    return 0;
@@ -679,13 +752,14 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
    h.g_sdf = this->g_sdf;
    h.adofindices = adofindices;
    h.J = (double *) malloc(3*n_adofgoal*sizeof(double));
+   h.J2 = (double *) malloc(3*n_adofgoal*sizeof(double));
    h.e = this->e;
    
    /* ok, ready to go! create a chomp solver */
    err = cd_chomp_create(&c, n_adofgoal, N_INTPOINTS, 1, &h,
       (int (*)(void *, double *, double *, double *))sphere_cost,
       (int (*)(void *, double *, double *, double *))sphere_cost_grad);
-   if (err) { RAVELOG_ERROR("Error creating chomp instance.\n"); free(Gjlimit); free(GjlimitAinv); free(h.J); free(adofgoal); free(adofindices); return false; }
+   if (err) { RAVELOG_ERROR("Error creating chomp instance.\n"); free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofgoal); free(adofindices); return false; }
    /*c->lambda = 1000000.0;*/
    c->lambda = 5.0;
    /* this parameter affects how fast things settle;
@@ -715,7 +789,7 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
    
    /* Initialize CHOMP */
    err = cd_chomp_init(c);
-   if (err) { RAVELOG_ERROR("Error initializing chomp instance.\n"); free(Gjlimit); free(GjlimitAinv); free(h.J); free(adofindices); cd_chomp_destroy(c); return false; }
+   if (err) { RAVELOG_ERROR("Error initializing chomp instance.\n"); free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofindices); cd_chomp_destroy(c); return false; }
    
    printf("iterating CHOMP once ...\n");
    for (iter=0; iter<100; iter++)
@@ -803,6 +877,7 @@ bool orcdchomp::runchomp(ostream& sout, istream& sinput)
    free(GjlimitAinv);
    free(Gjlimit);
    free(h.J);
+   free(h.J2);
    free(adofindices);
    return true;
 }
