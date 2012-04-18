@@ -23,7 +23,7 @@ extern "C" {
 
 #define EPSILON (0.1) /* in meters */
 #define EPSILON_SELF (0.04) /* in meters */
-#define OBS_FACTOR (30.0)
+#define OBS_FACTOR (200.0)
 #define OBS_FACTOR_SELF (10.0)
 
 using namespace OpenRAVE;
@@ -105,10 +105,6 @@ public:
       if(!this->d) this->d.reset(new rdata());
       /* get ready */
       this->inside_spheres = false;
-      
-      RAVELOG_INFO("the attributes orcdchomp is created with are:\n");
-      for(AttributesList::const_iterator itatt = atts.begin(); itatt != atts.end(); ++itatt)
-         RAVELOG_INFO("%s=%s\n",itatt->first.c_str(),itatt->second.c_str());
    }
 
    virtual XMLReadablePtr GetReadable() { return this->d; }
@@ -356,32 +352,32 @@ bool mod::viewspheres(std::ostream& sout, std::istream& sinput)
       char buf[64];
       int len;
       in = str_from_istream(sinput);
-      if (!in) { RAVELOG_ERROR("Out of memory!\n"); return false; }
+      if (!in) { throw openrave_exception("Out of memory!"); }
       cur = in;
       while (1)
       {
          if (strp_skipprefix(&cur, (char *)"robot"))
          {
-            if (r.get()) { RAVELOG_ERROR("Only one robot can be passed!\n"); free(in); return false; }
+            if (r.get()) { free(in); throw openrave_exception("Only one robot can be passed!"); }
             sscanf(cur, " %s%n", buf, &len); cur += len;
             r = this->e->GetRobot(buf)/*.get()*/;
-            if (!r.get()) { RAVELOG_ERROR("Could not find robot with name %s!\n",buf); free(in); return false; }
+            if (!r.get()) { free(in); throw openrave_exception("Could not find robot with that name!"); }
             RAVELOG_INFO("Using robot %s.\n", r->GetName().c_str());
             continue;
          }
          break;
       }
-      if (cur[0]) RAVELOG_ERROR("remaining string: |%s|! continuing ...\n", cur);
+      if (cur[0]) RAVELOG_WARN("remaining string: |%s|! continuing ...\n", cur);
       free(in);
    }
    
    /* check that we have everything */
-   if (!r.get()) { RAVELOG_ERROR("Did not pass all required args!\n"); return false; }
+   if (!r.get()) { throw openrave_exception("Did not pass all required args!"); }
    
    /* ensure the robot has spheres defined */
    {
       boost::shared_ptr<rdata> d = boost::dynamic_pointer_cast<rdata>(r->GetReadableInterface("orcdchomp"));
-      if (!d) { RAVELOG_ERROR("robot does not have a <orcdchomp> tag defined!\n"); return false; }
+      if (!d) { throw openrave_exception("robot does not have a <orcdchomp> tag defined!"); }
       spheres = d->spheres;
    }
    
@@ -433,28 +429,27 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
       char buf[64];
       int len;
       in = str_from_istream(sinput);
-      if (!in) { RAVELOG_ERROR("Out of memory!\n"); return false; }
+      if (!in) { throw openrave_exception("Out of memory!"); }
       cur = in;
       while (1)
       {
          if (strp_skipprefix(&cur, (char *)"robot"))
          {
-            if (robot) { RAVELOG_ERROR("Only one robot can be passed!\n"); free(in); return false; }
+            if (robot) { free(in); throw openrave_exception("Only one robot can be passed!"); }
             sscanf(cur, " %s%n", buf, &len); cur += len;
             robot = this->e->GetRobot(buf).get();
-            if (!robot) { RAVELOG_ERROR("Could not find robot with name %s!\n",buf); free(in); return false; }
+            if (!robot) { free(in); throw openrave_exception("Could not find robot with that name!"); }
             RAVELOG_INFO("Using robot %s.\n", robot->GetName().c_str());
             continue;
          }
          break;
       }
-      if (cur[0]) RAVELOG_ERROR("remaining string: |%s|! continuing ...\n", cur);
+      if (cur[0]) RAVELOG_WARN("remaining string: |%s|! continuing ...\n", cur);
       free(in);
    }
    
    /* check that we have everything */
-   if (!robot)
-      { RAVELOG_ERROR("Did not pass all required args!\n"); return false; }
+   if (!robot) throw openrave_exception("Did not pass all required args!");
    
    /* Create a new grid located around the current robot; 100x100x100
     * for now, this is axis-aligned.
@@ -462,7 +457,7 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
     * the box has extents +/- 2.0m, so each cube is 4cm on a side. */
    temp = 1.0; /* free space */
    err = cd_grid_create(&g_obs, &temp, sizeof(double), 3, 100, 100, 100);
-   if (err) { RAVELOG_ERROR("Not enough memory for distance field!\n"); return false; }
+   if (err) throw openrave_exception("Not enough memory for distance field!");
    cd_mat_fill(g_obs->lengths, 3, 1, 4.0, 4.0, 4.0);
    
    /* create the cube */
@@ -787,24 +782,24 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
       char buf[64];
       int len;
       in = str_from_istream(sinput);
-      if (!in) { RAVELOG_ERROR("Out of memory!\n"); return false; }
+      if (!in) throw openrave_exception("Out of memory!");
       cur = in;
       while (1)
       {
          if (strp_skipprefix(&cur, (char *)"robot"))
          {
-            if (r.get()) { RAVELOG_ERROR("Only one robot can be passed!\n"); free(adofgoal); free(in); return false; }
+            if (r.get()) { free(adofgoal); free(in); throw openrave_exception("Only one robot can be passed!"); }
             sscanf(cur, " %s%n", buf, &len); cur += len;
             r = this->e->GetRobot(buf)/*.get()*/;
-            if (!r.get()) { RAVELOG_ERROR("Could not find robot with name %s!\n",buf); free(adofgoal); free(in); return false; }
+            if (!r.get()) { free(adofgoal); free(in); throw openrave_exception("Could not find robot that name!"); }
             RAVELOG_INFO("Using robot %s.\n", r->GetName().c_str());
             continue;
          }
          if (strp_skipprefix(&cur, (char *)"adofgoal"))
          {
-            if (adofgoal) { RAVELOG_ERROR("Only one adofgoal can be passed!\n"); free(adofgoal); free(in); return false; }
+            if (adofgoal) { free(adofgoal); free(in); throw openrave_exception("Only one adofgoal can be passed!"); }
             sscanf(cur, " %d%n", &n_adofgoal, &len); cur += len;
-            if (n_adofgoal <= 0) { RAVELOG_ERROR("n_adofgoal must be >0!\n"); free(adofgoal); free(in); return false; }
+            if (n_adofgoal <= 0) { free(adofgoal); free(in); throw openrave_exception("n_adofgoal must be >0!"); }
             adofgoal = (double *) malloc(n_adofgoal * sizeof(double));
             for (j=0; j<n_adofgoal; j++)
             {
@@ -815,27 +810,27 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          }
          break;
       }
-      if (cur[0]) RAVELOG_ERROR("remaining string: |%s|! continuing ...\n", cur);
+      if (cur[0]) RAVELOG_WARN("remaining string: |%s|! continuing ...\n", cur);
       free(in);
    }
    
    /* check that we have everything */
    if (!r.get() || !adofgoal)
-      { RAVELOG_ERROR("Did not pass all required args!\n"); free(adofgoal); return false; }
+      { free(adofgoal); throw openrave_exception("Did not pass all required args!"); }
    
    /* ensure the robot has spheres defined */
    {
       boost::shared_ptr<rdata> d = boost::dynamic_pointer_cast<rdata>(r->GetReadableInterface("orcdchomp"));
-      if (!d) { RAVELOG_ERROR("robot does not have a <orcdchomp> tag defined!\n"); free(adofgoal); return false; }
+      if (!d) { free(adofgoal); throw openrave_exception("robot does not have a <orcdchomp> tag defined!"); }
       spheres = d->spheres;
    }
    
    if (!this->g_sdf)
-      { RAVELOG_ERROR("A signed distance field has not yet been computed!\n"); free(adofgoal); return false; }
+      { free(adofgoal); throw openrave_exception("A signed distance field has not yet been computed!"); }
    
    /* check that n_adofgoal matches active dof */
    if (n_adofgoal != r->GetActiveDOF())
-      { RAVELOG_ERROR("size of adofgoal does not match active dofs!\n"); free(adofgoal); return false; }
+      { free(adofgoal); throw openrave_exception("size of adofgoal does not match active dofs!"); }
    
    /* allocate adofindices */
    adofindices = (int *) malloc(n_adofgoal * sizeof(int));
@@ -867,9 +862,9 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    err = cd_chomp_create(&c, n_adofgoal, N_INTPOINTS, 1, &h,
       (int (*)(void *, double *, double *, double *))sphere_cost,
       (int (*)(void *, double *, double *, double *))sphere_cost_grad);
-   if (err) { RAVELOG_ERROR("Error creating chomp instance.\n"); free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofgoal); free(adofindices); return false; }
+   if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofgoal); free(adofindices); throw openrave_exception("Error creating chomp instance."); }
    /*c->lambda = 1000000.0;*/
-   c->lambda = 5.0;
+   c->lambda = 10.0;
    /* this parameter affects how fast things settle;
     * 1.0e1 ~ 90% smooth in ~10 iterations
     * bigger, means much slower convergence */
@@ -897,10 +892,10 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    
    /* Initialize CHOMP */
    err = cd_chomp_init(c);
-   if (err) { RAVELOG_ERROR("Error initializing chomp instance.\n"); free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofindices); cd_chomp_destroy(c); return false; }
+   if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofindices); cd_chomp_destroy(c); throw openrave_exception("Error initializing chomp instance."); }
    
    printf("iterating CHOMP once ...\n");
-   for (iter=0; iter<100; iter++)
+   for (iter=0; iter<20; iter++)
    {
       double cost_total;
       double cost_obs;
@@ -974,6 +969,24 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
 #else
    OpenRAVE::planningutils::RetimeActiveDOFTrajectory(t,r,false,0.2,"");
 #endif
+   printf("done!\n");
+   
+   printf("checking trajectory for collision ...\n");
+   {
+      double time;
+      CollisionReportPtr report(new CollisionReport());
+      for (time=0.0; time<t->GetDuration(); time+=0.01)
+      {
+         std::vector< dReal > point;
+         t->Sample(point, time);
+         r->SetActiveDOFValues(point);
+         if (this->e->CheckCollision(r,report))
+         {
+            RAVELOG_ERROR("Collision: %s\n", report->__str__().c_str());
+            { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofindices); cd_chomp_destroy(c); throw openrave_exception("Resulting trajectory is in collision!"); }
+         }
+      }
+   }
    printf("done!\n");
    
    printf("serializing trajectory ...\n");

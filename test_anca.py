@@ -88,89 +88,23 @@ libprrave.rave.get_module(e,'orcdchomp').SendCommand(
    'computedistancefield robot BarrettWAM')
 r.Enable(True)
 
-raw_input('Press [Enter] run chomp ...')
-t_data = libprrave.rave.get_module(e,'orcdchomp').SendCommand(
-   'runchomp robot BarrettWAM adofgoal 7 %s' % (' '.join([str(v) for v in q_goal])))
-t = openravepy.RaveCreateTrajectory(e,'').deserialize(t_data)
+try:
+   raw_input('Press [Enter] run chomp ...')
+   t_data = libprrave.rave.get_module(e,'orcdchomp').SendCommand(
+      'runchomp robot BarrettWAM adofgoal 7 %s' % (' '.join([str(v) for v in q_goal])))
+   t = openravepy.RaveCreateTrajectory(e,'').deserialize(t_data)
+except RuntimeError as ex:
+   print ex
+   t = None
 
 try:
-   while True:
+   while t is not None:
       raw_input('Press [Enter] to run the trajectory ...')
       with e:
          r.GetController().SetPath(t)
 except KeyboardInterrupt:
    print
 
+raw_input('Press [Enter] to quit ...')
 e.Destroy()
 openravepy.RaveDestroy()
-
-
-
-##create the TSR string
-##place the first TSR's reference frame at the object's frame relative to world frame
-#T0_w = bottle.GetTransform()
-##get the TSR's offset frame in w coordinates    
-#Tw_e = MakeTransform(rodrigues([0,pi,0])*rodrigues([pi / 2, 0, 0]), mat([0, 0.20, 0.1]).T)
-##Tw_e = MakeTransform(rodrigues([pi / 2, 0, 0]), mat([0, 0.22, 0.1]).T)
-##define bounds to only allow rotation of the hand about z axis and a small deviation in translation along the z axis
-#Bw = mat([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -pi, pi])
-#TSRstring = SerializeTSR(0, 'NULL', T0_w, Tw_e, Bw) 
-
-
-#if len(sys.argv)==1:
-  
-
-    #chomp_darpa = RaveCreateProblem(env,'chomp_darpa')
-    #env.LoadProblem(chomp_darpa, '')
-
-
-    ##resp=chomp_darpa.SendCommand('plan robot BarrettWAM configuration '+goal+' trajfile chomp_darpa_traj.txt')
-    ##resp=chomp_darpa.SendCommand('plan robot BarrettWAM eetrans' +SerializeTransform(goal_trans)+ 'trajfile chomp_darpa_traj.txt')
-    #resp=chomp_darpa.SendCommand('plan robot BarrettWAM TSR ' + TSRstring+ ' trajfile chomp_darpa_traj.txt')
-    
-    ##raw_input("Press ENTER for trajectory.")
-    #if (int(resp)==1):
-        #resp = chomp_darpa.SendCommand('execute BarrettWAM chomp_darpa_traj.txt')
-    #else:
-        #print "Sorry, CHOMP failed this time."    
-    
-    
-    
-#elif sys.argv[1]=="oldchomp":
-        
-    #chomp = RaveCreateProblem(env,'chomp')
-    #env.LoadProblem(chomp, '')
-    
-
-    #resultsfile = "testing_results.txt"
-    #trajfile = "chomp_traj.txt"
-    #command = 'goto BarrettWAM '+'1 ' + ' ' + goal +' ' + resultsfile +  ' ' + trajfile + ' TrajectoryTracking.txt '+ 'hard'+ ' '+'nohmc'
-    #resp = chomp.SendCommand(command)
-
-    #raw_input("ENTER for traj")
-    #command = 'execute BarrettWAM '+trajfile
-    #chomp.SendCommand(command)   
-
-#elif sys.argv[1]=="vis":
-    #end_points, num_waypoints, num_trajs = GetEndEffectorTrajectories()
-    
-    #balls=[]
-    #for i in range(num_waypoints):
-        #ball=env.ReadKinBodyXMLFile('smallsphere.kinbody.xml')
-        #ball.SetName(str(i))
-        #env.AddKinBody(ball)
-        #balls.append(ball)
-        
-    #raw_input("press enter to see traj")    
-    #for i in range(num_trajs):
-        #for j in range(num_waypoints):
-            ##put in the ball
-            #t=end_points[i*int(num_waypoints[0])+j]
-            #balls[j].SetTransform(t)
-        #sleep(0.08)  
-            
-    
-        
-    
-        
-    
