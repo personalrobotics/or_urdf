@@ -9,12 +9,9 @@
 extern "C" {
 #include <libcd/chomp.h>
 #include <libcd/grid.h>
-#include <libcd/gs.h>
 #include <libcd/kin.h>
 #include <libcd/mat.h>
-#include <libcd/png.h>
 #include <libcd/util.h>
-#include <libcd-gscpp.h>
 }
 
 #define TAU (6.283185307179586)
@@ -169,6 +166,7 @@ class mod : public ModuleBase
 {
 public:
    EnvironmentBasePtr e; /* filled on module creation */
+   double g_pos[3]; /* location of the zero-corner of the grid */
    cd_grid * g_sdf;
    
    bool viewspheres(std::ostream& sout, std::istream& sinput);
@@ -450,6 +448,12 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
    
    /* check that we have everything */
    if (!robot) throw openrave_exception("Did not pass all required args!");
+
+   /* the grid position is 2m in -x, 2m in -y, and 1m in -z from the robot location */
+   Transform t = robot->GetTransform();
+   this->g_pos[0] = t.trans.x - 2.0;
+   this->g_pos[1] = t.trans.y - 2.0;
+   this->g_pos[2] = t.trans.z - 1.0;
    
    /* Create a new grid located around the current robot; 100x100x100
     * for now, this is axis-aligned.
@@ -473,6 +477,8 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
    
    /* add the cube */
    this->e->AddKinBody(cube);
+
+   int cols = 0;
    
    /* go through the grid, testing for collision as we go;
     * collisions are HUGE_VAL, free are 1.0 */
@@ -488,15 +494,20 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
       /* set cube location */
       t.identity();
       cd_grid_center_index(g_obs, idx, center);
-      t.trans.x = center[0] - 2.0;
-      t.trans.y = center[1] - 2.0;
-      t.trans.z = center[2] - 1.0;
+      t.trans.x = this->g_pos[0] + center[0];
+      t.trans.y = this->g_pos[1] + center[1];
+      t.trans.z = this->g_pos[2] + center[2];
       cube->SetTransform(t);
       
       /* do collision check */
       if (this->e->CheckCollision(cube))
+      {
          *(double *)cd_grid_get_index(g_obs, idx) = HUGE_VAL;
+         cols++;
+      }
    }
+
+   printf("found %d collisions!\n",cols);
    
    /* remove cube */
    this->e->Remove(cube);
@@ -528,6 +539,7 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
 struct cost_helper
 {
    int n; /* config space dimensionality */
+   double * g_pos;
    struct cd_grid * g_sdf;
    RobotBase * r;
    int * adofindices;
@@ -576,9 +588,9 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
          1.0, h->J,h->n, c_vel,1, 0.0, x_vel,1);
       
       /* transform into grid frame */
-      g_point[0] = v.x + 2.0;
-      g_point[1] = v.y + 2.0;
-      g_point[2] = v.z + 1.0;
+      g_point[0] = v.x - h->g_pos[0];
+      g_point[1] = v.y - h->g_pos[1];
+      g_point[2] = v.z - h->g_pos[2];
       /* get sdf value (from interp) */
       cd_grid_double_interp(h->g_sdf, g_point, &dist);
       /* subtract radius to get distance of closest sphere point to closest obstacle */
@@ -659,9 +671,9 @@ int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, d
          1.0, h->J,h->n, c_vel,1, 0.0, x_vel,1);
 
       /* transform sphere center into grid frame */
-      g_point[0] = v.x + 2.0;
-      g_point[1] = v.y + 2.0;
-      g_point[2] = v.z + 1.0;
+      g_point[0] = v.x - h->g_pos[0];
+      g_point[1] = v.y - h->g_pos[1];
+      g_point[2] = v.z - h->g_pos[2];
       /* get sdf value (from interp) */
       cd_grid_double_interp(h->g_sdf, g_point, &dist);
       /* get sdf gradient */
@@ -852,6 +864,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    h.n = n_adofgoal;
    h.r = r.get();
    h.spheres = spheres;
+   h.g_pos = this->g_pos;
    h.g_sdf = this->g_sdf;
    h.adofindices = adofindices;
    h.J = (double *) malloc(3*n_adofgoal*sizeof(double));
@@ -951,7 +964,6 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    
    printf("done!\n");
    
-   printf("creating trajectory ...\n");
    /* create an openrave trajectory from the result, and send to sout */
    TrajectoryBasePtr t = RaveCreateTrajectory(this->e);
    t->Init(r->GetActiveConfigurationSpecification());
@@ -960,17 +972,15 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
       std::vector<dReal> vec(c->T_ext_points[i], c->T_ext_points[i]+n_adofgoal);
       t->Insert(i, vec);
    }
-   printf("done!\n");
    
-   printf("smoothing trajectory ...\n");
+   printf("timing trajectory ...\n");
 #if OPENRAVE_VERSION >= OPENRAVE_VERSION_COMBINED(0,7,0)
    /* new openrave added a fmaxaccelmult parameter (number 5) */
    OpenRAVE::planningutils::RetimeActiveDOFTrajectory(t,r,false,0.2,0.2,"","");
 #else
    OpenRAVE::planningutils::RetimeActiveDOFTrajectory(t,r,false,0.2,"");
 #endif
-   printf("done!\n");
-   
+
    printf("checking trajectory for collision ...\n");
    {
       double time;
@@ -987,11 +997,8 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          }
       }
    }
-   printf("done!\n");
    
-   printf("serializing trajectory ...\n");
    t->serialize(sout);
-   printf("done!\n");
    
    cd_chomp_destroy(c);
    
