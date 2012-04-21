@@ -12,7 +12,7 @@
   <!-- for testing ... -->
   <depend package="libprrave"/>
   <depend package="ros_exportenv"/>
-  <!--<depend package="pr_ordata"/>-->
+  <depend package="pr_ordata"/>
 </package>
 
 
