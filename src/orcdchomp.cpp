@@ -14,8 +14,6 @@ extern "C" {
 #include <libcd/util.h>
 }
 
-#define TAU (6.283185307179586)
-
 #define N_INTPOINTS (99)
 
 #define EPSILON (0.1) /* in meters */
@@ -768,9 +766,13 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    int iter;
    int err;
    EnvironmentMutex::scoped_lock lockenv;
+   /* parameters from the command line */
    RobotBasePtr r;
    double * adofgoal;
    int n_adofgoal;
+   int n_iter;
+   double lambda;
+   /* stuff we compute later */
    int * adofindices;
    struct cd_chomp * c;
    struct cost_helper h;
@@ -786,6 +788,8 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    
    /*r = 0;*/
    adofgoal = 0;
+   n_iter = 10;
+   lambda = 10.0;
    
    /* parse arguments into robot */
    {
@@ -818,6 +822,18 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
                sscanf(cur, " %lf%n", &adofgoal[j], &len); cur += len;
             }
             cd_mat_vec_print("parsed adofgoal: ", adofgoal, n_adofgoal);
+            continue;
+         }
+         if (strp_skipprefix(&cur, (char *)"n_iter"))
+         {
+            sscanf(cur, " %d%n", &n_iter, &len); cur += len;
+            if (n_iter < 0) { free(adofgoal); free(in); throw openrave_exception("n_iter must be >=0!"); }
+            continue;
+         }
+         if (strp_skipprefix(&cur, (char *)"lambda"))
+         {
+            sscanf(cur, " %lf%n", &lambda, &len); cur += len;
+            if (lambda < 0.01) { free(adofgoal); free(in); throw openrave_exception("lambda must be >=0.01!"); }
             continue;
          }
          break;
@@ -877,7 +893,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
       (int (*)(void *, double *, double *, double *))sphere_cost_grad);
    if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofgoal); free(adofindices); throw openrave_exception("Error creating chomp instance."); }
    /*c->lambda = 1000000.0;*/
-   c->lambda = 10.0;
+   c->lambda = lambda;
    /* this parameter affects how fast things settle;
     * 1.0e1 ~ 90% smooth in ~10 iterations
     * bigger, means much slower convergence */
@@ -908,11 +924,16 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofindices); cd_chomp_destroy(c); throw openrave_exception("Error initializing chomp instance."); }
    
    printf("iterating CHOMP once ...\n");
-   for (iter=0; iter<20; iter++)
+   for (iter=0; iter<n_iter; iter++)
    {
       double cost_total;
       double cost_obs;
       double cost_smooth;
+#if 0
+      /* lambda increases over time */
+      c->lambda = 10.0 * exp(0.1 * iter);
+      printf("lambda: %f\n", c->lambda);
+#endif
       cd_chomp_cost(c, &cost_total, &cost_obs, &cost_smooth);
       printf("iter:%2d cost_total:%f cost_obs:%f cost_smooth:%f\n", iter, cost_total, cost_obs, cost_smooth);
       cd_chomp_iterate(c);
