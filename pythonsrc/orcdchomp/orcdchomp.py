@@ -1,4 +1,28 @@
+import types
 import openravepy
+
+def bind(mod):
+   mod.viewspheres = types.MethodType(viewspheres,mod)
+   mod.computedistancefield = types.MethodType(computedistancefield,mod)
+   mod.runchomp = types.MethodType(runchomp,mod)
+   
+def viewspheres(mod, robot=None):
+   cmd = 'viewspheres'
+   if robot is not None:
+      if hasattr(robot,'GetName'):
+         cmd += ' robot %s' % robot.GetName()
+      else:
+         cmd += ' robot %s' % robot
+   return mod.SendCommand(cmd)
+
+def computedistancefield(mod, robot=None):
+   cmd = 'computedistancefield'
+   if robot is not None:
+      if hasattr(robot,'GetName'):
+         cmd += ' robot %s' % robot.GetName()
+      else:
+         cmd += ' robot %s' % robot
+   return mod.SendCommand(cmd)
 
 def runchomp(mod, robot=None, adofgoal=None, n_iter=None, lambda_=None):
    cmd = 'runchomp'
