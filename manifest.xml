@@ -2,19 +2,13 @@
   <description brief="orcdchomp">
      orcdchomp is an implementation of chomp using libcd.
   </description>
-  <author>Chris Dellinpr account</author>
+  <author>Chris Dellin</author>
   <depend package="openrave"/>
   <export>
     <python path="${prefix}/pythonsrc"/>
     <!--<env var="OPENRAVE_PLUGINS" append=":${prefix}/lib"/>-->
     <python path="ENV/OPENRAVE_PLUGINS+=\x3A${prefix}/lib"/> <!-- literal \x3A turned into a : -->
   </export>
-  <!-- for test exampels ... -->
-  <depend package="ros_exportenv"/>
-  <depend package="libprrave"/>
-  <depend package="pr_ordata"/>
-  <depend package="cbirrt2"/>
-  <depend package="generalik"/>
 </package>
 
 
