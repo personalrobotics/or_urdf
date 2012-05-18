@@ -24,7 +24,7 @@ def computedistancefield(mod, robot=None):
          cmd += ' robot %s' % robot
    return mod.SendCommand(cmd)
 
-def runchomp(mod, robot=None, adofgoal=None, n_iter=None, lambda_=None):
+def runchomp(mod, robot=None, adofgoal=None, n_iter=None, lambda_=None, starttraj=None):
    cmd = 'runchomp'
    if robot is not None:
       if hasattr(robot,'GetName'):
@@ -37,5 +37,8 @@ def runchomp(mod, robot=None, adofgoal=None, n_iter=None, lambda_=None):
       cmd += ' n_iter %d' % n_iter
    if lambda_ is not None:
       cmd += ' lambda %0.04f' % lambda_
-   traj_data = mod.SendCommand(cmd)
-   return openravepy.RaveCreateTrajectory(mod.GetEnv(),'').deserialize(traj_data)
+   if starttraj is not None:
+      in_traj_data = starttraj.serialize(0) # options
+      cmd += ' starttraj %d %s' % (len(in_traj_data), in_traj_data)
+   out_traj_data = mod.SendCommand(cmd)
+   return openravepy.RaveCreateTrajectory(mod.GetEnv(),'').deserialize(out_traj_data)

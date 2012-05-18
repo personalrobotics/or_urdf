@@ -18,7 +18,7 @@ extern "C" {
 
 #define EPSILON (0.1) /* in meters */
 #define EPSILON_SELF (0.04) /* in meters */
-#define OBS_FACTOR (200.0)
+#define OBS_FACTOR (500.0)
 #define OBS_FACTOR_SELF (10.0)
 
 using namespace OpenRAVE;
@@ -768,6 +768,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    EnvironmentMutex::scoped_lock lockenv;
    /* parameters from the command line */
    RobotBasePtr r;
+   int n_dof;
    double * adofgoal;
    int n_adofgoal;
    int n_iter;
@@ -782,6 +783,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    std::vector< dReal > vec_jlimit_upper;
    struct sphere * s;
    struct sphere * spheres;
+   TrajectoryBasePtr starttraj;
    
    /* lock environment */
    lockenv = EnvironmentMutex::scoped_lock(this->e->GetMutex());
@@ -814,6 +816,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          if (strp_skipprefix(&cur, (char *)"adofgoal"))
          {
             if (adofgoal) { free(adofgoal); free(in); throw openrave_exception("Only one adofgoal can be passed!"); }
+            if (starttraj.get()) { free(adofgoal); free(in); throw openrave_exception("Cannot pass both adofgoal and starttraj!"); }
             sscanf(cur, " %d%n", &n_adofgoal, &len); cur += len;
             if (n_adofgoal <= 0) { free(adofgoal); free(in); throw openrave_exception("n_adofgoal must be >0!"); }
             adofgoal = (double *) malloc(n_adofgoal * sizeof(double));
@@ -836,15 +839,40 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
             if (lambda < 0.01) { free(adofgoal); free(in); throw openrave_exception("lambda must be >=0.01!"); }
             continue;
          }
+         if (strp_skipprefix(&cur, (char *)"starttraj"))
+         {
+            int ser_len;
+            if (starttraj.get()) { free(adofgoal); free(in); throw openrave_exception("Only one starttraj can be passed!"); }
+            if (adofgoal) { free(adofgoal); free(in); throw openrave_exception("Cannot pass both adofgoal and starttraj!"); }
+            sscanf(cur, " %d%n", &ser_len, &len); cur += len;
+            /* skip a space */
+            if (*cur != ' ') { free(adofgoal); free(in); throw openrave_exception("syntax is starttraj numchars <string>!"); }
+            cur++;
+            for (j=0; j<ser_len; j++) if (!cur[j]) break;
+            if (j<ser_len) { free(adofgoal); free(in); throw openrave_exception("not enough characters in string!"); }
+            /* create trajectory */
+            starttraj = RaveCreateTrajectory(this->e);
+            std::istringstream ser_iss(std::string(cur,ser_len));
+            starttraj->deserialize(ser_iss);
+            cur += ser_len;
+            continue;
+         }
          break;
       }
       if (cur[0]) RAVELOG_WARN("remaining string: |%s|! continuing ...\n", cur);
       free(in);
    }
    
-   /* check that we have everything */
-   if (!r.get() || !adofgoal)
-      { free(adofgoal); throw openrave_exception("Did not pass all required args!"); }
+   /* check validity of input arguments ... */
+   
+   if (!r.get())
+      { free(adofgoal); throw openrave_exception("Did not pass a robot!"); }
+   
+   if (!adofgoal && !starttraj.get())
+      { free(adofgoal); throw openrave_exception("Did not pass either adofgoal or starttraj!"); }
+   
+   if (!this->g_sdf)
+      { free(adofgoal); throw openrave_exception("A signed distance field has not yet been computed!"); }
    
    /* ensure the robot has spheres defined */
    {
@@ -853,23 +881,31 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
       spheres = d->spheres;
    }
    
-   if (!this->g_sdf)
-      { free(adofgoal); throw openrave_exception("A signed distance field has not yet been computed!"); }
-   
-   /* check that n_adofgoal matches active dof */
-   if (n_adofgoal != r->GetActiveDOF())
-      { free(adofgoal); throw openrave_exception("size of adofgoal does not match active dofs!"); }
+   n_dof = r->GetActiveDOF();
    
    /* allocate adofindices */
-   adofindices = (int *) malloc(n_adofgoal * sizeof(int));
+   adofindices = (int *) malloc(r->GetActiveDOF() * sizeof(int));
    {
       std::vector<int> vec = r->GetActiveDOFIndices();
-      for (i=0; i<n_adofgoal; i++)
+      printf("adofindices:");
+      for (i=0; i<r->GetActiveDOF(); i++)
+      {
          adofindices[i] = vec[i];
+         printf(" %d", adofindices[i]);
+      }
+      printf("\n");
    }
    
-   Gjlimit = (double *) malloc(N_INTPOINTS * n_adofgoal * sizeof(double));
-   GjlimitAinv = (double *) malloc(N_INTPOINTS * n_adofgoal * sizeof(double));
+   /* check that n_adofgoal matches active dof */
+   if (adofgoal && (n_dof != n_adofgoal))
+      { printf("n_dof: %d; n_adofgoal: %d\n", n_dof, n_adofgoal);
+         free(adofgoal); throw openrave_exception("size of adofgoal does not match active dofs!"); }
+   
+   /* check that starttraj has the right ConfigurationSpecification? */
+   
+   /* get joint limits */
+   Gjlimit = (double *) malloc(N_INTPOINTS * n_dof * sizeof(double));
+   GjlimitAinv = (double *) malloc(N_INTPOINTS * n_dof * sizeof(double));
    r->GetDOFLimits(vec_jlimit_lower, vec_jlimit_upper);
    
    /* compute sphere link indices */
@@ -877,20 +913,21 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
       s->linkindex = r->GetLink(s->linkname)->GetIndex();
    
    /* initialize the cost helper */
-   h.n = n_adofgoal;
+   h.n = n_dof;
    h.r = r.get();
    h.spheres = spheres;
    h.g_pos = this->g_pos;
    h.g_sdf = this->g_sdf;
    h.adofindices = adofindices;
-   h.J = (double *) malloc(3*n_adofgoal*sizeof(double));
-   h.J2 = (double *) malloc(3*n_adofgoal*sizeof(double));
+   h.J = (double *) malloc(3*n_dof*sizeof(double));
+   h.J2 = (double *) malloc(3*n_dof*sizeof(double));
    h.e = this->e;
    
    /* ok, ready to go! create a chomp solver */
-   err = cd_chomp_create(&c, n_adofgoal, N_INTPOINTS, 1, &h,
+   err = cd_chomp_create(&c, n_dof, N_INTPOINTS, 1, &h,
       (int (*)(void *, double *, double *, double *))sphere_cost,
-      (int (*)(void *, double *, double *, double *))sphere_cost_grad);
+      (int (*)(void *, double *, double *, double *))sphere_cost_grad,
+      0, 0);
    if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofgoal); free(adofindices); throw openrave_exception("Error creating chomp instance."); }
    /*c->lambda = 1000000.0;*/
    c->lambda = lambda;
@@ -899,22 +936,35 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
     * bigger, means much slower convergence */
    
    /* initialize trajectory */
+   if (starttraj.get())
+   {
+      RAVELOG_INFO("Initializing from a passed trajectory ...\n");
+      for (i=0; i<N_INTPOINTS+2; i++)
+      {
+         std::vector<dReal> vec;
+         starttraj->Sample(vec, i*starttraj->GetDuration()/(N_INTPOINTS+1), r->GetActiveConfigurationSpecification());
+         for (j=0; j<n_dof; j++)
+            c->T_ext_points[i][j] = vec[j];
+      }
+   }
+   else
    {
       std::vector<dReal> vec;
       double percentage;
+      RAVELOG_INFO("Initializing from a straight-line trajectory ...\n");
       /* starting point */
       r->GetActiveDOFValues(vec);
-      for (j=0; j<n_adofgoal; j++)
+      for (j=0; j<n_dof; j++)
          c->T_ext_points[0][j] = vec[j];
       /* ending point */
-      cd_mat_memcpy(c->T_ext_points[N_INTPOINTS+1], adofgoal, n_adofgoal, 1);
+      cd_mat_memcpy(c->T_ext_points[N_INTPOINTS+1], adofgoal, n_dof, 1);
       /* all points in between */
-      cd_mat_set_zero(&c->T_ext_points[1][0], N_INTPOINTS, n_adofgoal);
+      cd_mat_set_zero(&c->T_ext_points[1][0], N_INTPOINTS, n_dof);
       for (i=1; i<N_INTPOINTS+1; i++)
       {
          percentage = 1.0*i/(N_INTPOINTS+1); /* between 0.0 (starting point) to 1.0 (ending point) */
-         cblas_daxpy(n_adofgoal, 1.0-percentage, c->T_ext_points[0],1,             c->T_ext_points[i],1);
-         cblas_daxpy(n_adofgoal,     percentage, c->T_ext_points[N_INTPOINTS+1],1, c->T_ext_points[i],1);
+         cblas_daxpy(n_dof, 1.0-percentage, c->T_ext_points[0],1,             c->T_ext_points[i],1);
+         cblas_daxpy(n_dof,     percentage, c->T_ext_points[N_INTPOINTS+1],1, c->T_ext_points[i],1);
       }
    }
    free(adofgoal);
@@ -990,7 +1040,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    t->Init(r->GetActiveConfigurationSpecification());
    for (i=0; i<N_INTPOINTS+2; i++)
    {
-      std::vector<dReal> vec(c->T_ext_points[i], c->T_ext_points[i]+n_adofgoal);
+      std::vector<dReal> vec(c->T_ext_points[i], c->T_ext_points[i]+n_dof);
       t->Insert(i, vec);
    }
    
@@ -1014,7 +1064,9 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          if (this->e->CheckCollision(r,report))
          {
             RAVELOG_ERROR("Collision: %s\n", report->__str__().c_str());
+#if 0
             { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofindices); cd_chomp_destroy(c); throw openrave_exception("Resulting trajectory is in collision!"); }
+#endif
          }
       }
    }
