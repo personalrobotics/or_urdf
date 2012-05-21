@@ -18,7 +18,7 @@ extern "C" {
 
 #define EPSILON (0.1) /* in meters */
 #define EPSILON_SELF (0.04) /* in meters */
-#define OBS_FACTOR (500.0)
+#define OBS_FACTOR (200.0)
 #define OBS_FACTOR_SELF (10.0)
 
 using namespace OpenRAVE;
@@ -926,8 +926,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    /* ok, ready to go! create a chomp solver */
    err = cd_chomp_create(&c, n_dof, N_INTPOINTS, 1, &h,
       (int (*)(void *, double *, double *, double *))sphere_cost,
-      (int (*)(void *, double *, double *, double *))sphere_cost_grad,
-      0, 0);
+      (int (*)(void *, double *, double *, double *))sphere_cost_grad);
    if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofgoal); free(adofindices); throw openrave_exception("Error creating chomp instance."); }
    /*c->lambda = 1000000.0;*/
    c->lambda = lambda;
@@ -1080,6 +1079,8 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    free(h.J);
    free(h.J2);
    free(adofindices);
+
+   printf("runchomp done! returning ...\n");
    return true;
 }
 
