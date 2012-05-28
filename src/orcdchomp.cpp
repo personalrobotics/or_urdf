@@ -21,7 +21,7 @@ extern "C" {
 #define OBS_FACTOR (200.0)
 #define OBS_FACTOR_SELF (10.0)
 
-using namespace OpenRAVE;
+#define CUBE_EXTENT (0.01)
 
 #if 0
 /* default openrave wam7 */
@@ -72,10 +72,10 @@ struct sphere
 };
 
 /* the robot-attached data class */
-class rdata : public XMLReadable
+class rdata : public OpenRAVE::XMLReadable
 {
 public:
-   rdata() : XMLReadable("orcdchomp") { this->spheres = 0; }
+   rdata() : OpenRAVE::XMLReadable("orcdchomp") { this->spheres = 0; }
    ~rdata()
    {
       struct sphere * s;
@@ -90,10 +90,10 @@ public:
 };
 
 /* the rdata-parser */
-class rdata_parser : public BaseXMLReader
+class rdata_parser : public OpenRAVE::BaseXMLReader
 {
 public:
-   rdata_parser(boost::shared_ptr<rdata> passed_d, const AttributesList& atts)
+   rdata_parser(boost::shared_ptr<rdata> passed_d, const OpenRAVE::AttributesList& atts)
    {
       /* save or construct the rdata object */
       this->d = passed_d;
@@ -102,9 +102,9 @@ public:
       this->inside_spheres = false;
    }
 
-   virtual XMLReadablePtr GetReadable() { return this->d; }
+   virtual OpenRAVE::XMLReadablePtr GetReadable() { return this->d; }
 
-   virtual ProcessElement startElement(const std::string& name, const AttributesList& atts)
+   virtual ProcessElement startElement(const std::string& name, const OpenRAVE::AttributesList& atts)
    {
       if (name == "spheres")
       {
@@ -117,7 +117,7 @@ public:
          struct sphere * s;
          if (!this->inside_spheres) { RAVELOG_ERROR("you can't have <sphere> not inside <spheres>!\n"); return PE_Pass; }
          s = (struct sphere *) malloc(sizeof(struct sphere));
-         for(AttributesList::const_iterator itatt = atts.begin(); itatt != atts.end(); ++itatt)
+         for(OpenRAVE::AttributesList::const_iterator itatt = atts.begin(); itatt != atts.end(); ++itatt)
          {
             if (itatt->first=="link")
                strcpy(s->linkname, itatt->second.c_str());
@@ -160,18 +160,19 @@ public:
 };
 
 /* the module itself */
-class mod : public ModuleBase
+class mod : public OpenRAVE::ModuleBase
 {
 public:
-   EnvironmentBasePtr e; /* filled on module creation */
-   double g_pos[3]; /* location of the zero-corner of the grid */
+   OpenRAVE::EnvironmentBasePtr e; /* filled on module creation */
+   char kinbody_gsdf[256];
+   double pose_gsdf[7]; /* pose of the grid w.r.t. the kinbody frame */
    cd_grid * g_sdf;
    
    bool viewspheres(std::ostream& sout, std::istream& sinput);
    bool computedistancefield(std::ostream& sout, std::istream& sinput);
    bool runchomp(std::ostream& sout, std::istream& sinput);
 
-   mod(EnvironmentBasePtr penv) : ModuleBase(penv)
+   mod(OpenRAVE::EnvironmentBasePtr penv) : OpenRAVE::ModuleBase(penv)
    {
       __description = "orcdchomp: implement chomp using libcd";
       RegisterCommand("viewspheres",boost::bind(&mod::viewspheres,this,_1,_2),"view spheres");
@@ -195,21 +196,21 @@ public:
 
 namespace {
 static boost::shared_ptr<void> reg_reader;
-static BaseXMLReaderPtr rdata_parser_maker(InterfaceBasePtr ptr, const AttributesList& atts)
-   { return BaseXMLReaderPtr(new rdata_parser(boost::shared_ptr<rdata>(),atts)); }
+static OpenRAVE::BaseXMLReaderPtr rdata_parser_maker(OpenRAVE::InterfaceBasePtr ptr, const OpenRAVE::AttributesList& atts)
+   { return OpenRAVE::BaseXMLReaderPtr(new rdata_parser(boost::shared_ptr<rdata>(),atts)); }
 }
 
 /* export as an openrave module */
-void GetPluginAttributesValidated(PLUGININFO& info)
+void GetPluginAttributesValidated(OpenRAVE::PLUGININFO& info)
 { 
-   if(!reg_reader) reg_reader = RaveRegisterXMLReader(PT_Robot,"orcdchomp",rdata_parser_maker);
-   info.interfacenames[PT_Module].push_back("orcdchomp");
+   if(!reg_reader) reg_reader = OpenRAVE::RaveRegisterXMLReader(OpenRAVE::PT_Robot,"orcdchomp",rdata_parser_maker);
+   info.interfacenames[OpenRAVE::PT_Module].push_back("orcdchomp");
 }
-InterfaceBasePtr CreateInterfaceValidated(InterfaceType type, const std::string& interfacename, std::istream& sinput, EnvironmentBasePtr penv)
+OpenRAVE::InterfaceBasePtr CreateInterfaceValidated(OpenRAVE::InterfaceType type, const std::string& interfacename, std::istream& sinput, OpenRAVE::EnvironmentBasePtr penv)
 {
-   if((type == PT_Module)&&(interfacename == "orcdchomp"))
-      return InterfaceBasePtr(new mod(penv));
-   return InterfaceBasePtr();
+   if((type == OpenRAVE::PT_Module)&&(interfacename == "orcdchomp"))
+      return OpenRAVE::InterfaceBasePtr(new mod(penv));
+   return OpenRAVE::InterfaceBasePtr();
 }
 OPENRAVE_PLUGIN_API void DestroyPlugin()
    { RAVELOG_INFO("destroying plugin\n"); }
@@ -335,8 +336,8 @@ int replace_1_to_0(double * val, void * rptr)
 bool mod::viewspheres(std::ostream& sout, std::istream& sinput)
 {
    int i;
-   EnvironmentMutex::scoped_lock lockenv(this->e->GetMutex());
-   RobotBasePtr r;
+   OpenRAVE::EnvironmentMutex::scoped_lock lockenv(this->e->GetMutex());
+   OpenRAVE::RobotBasePtr r;
    char buf[1024];
    struct sphere * s;
    struct sphere * spheres;
@@ -348,16 +349,16 @@ bool mod::viewspheres(std::ostream& sout, std::istream& sinput)
       char buf[64];
       int len;
       in = str_from_istream(sinput);
-      if (!in) { throw openrave_exception("Out of memory!"); }
+      if (!in) { throw OpenRAVE::openrave_exception("Out of memory!"); }
       cur = in;
       while (1)
       {
          if (strp_skipprefix(&cur, (char *)"robot"))
          {
-            if (r.get()) { free(in); throw openrave_exception("Only one robot can be passed!"); }
+            if (r.get()) { free(in); throw OpenRAVE::openrave_exception("Only one robot can be passed!"); }
             sscanf(cur, " %s%n", buf, &len); cur += len;
             r = this->e->GetRobot(buf)/*.get()*/;
-            if (!r.get()) { free(in); throw openrave_exception("Could not find robot with that name!"); }
+            if (!r.get()) { free(in); throw OpenRAVE::openrave_exception("Could not find robot with that name!"); }
             RAVELOG_INFO("Using robot %s.\n", r->GetName().c_str());
             continue;
          }
@@ -368,12 +369,12 @@ bool mod::viewspheres(std::ostream& sout, std::istream& sinput)
    }
    
    /* check that we have everything */
-   if (!r.get()) { throw openrave_exception("Did not pass all required args!"); }
+   if (!r.get()) { throw OpenRAVE::openrave_exception("Did not pass all required args!"); }
    
    /* ensure the robot has spheres defined */
    {
       boost::shared_ptr<rdata> d = boost::dynamic_pointer_cast<rdata>(r->GetReadableInterface("orcdchomp"));
-      if (!d) { throw openrave_exception("robot does not have a <orcdchomp> tag defined!"); }
+      if (!d) { throw OpenRAVE::openrave_exception("robot does not have a <orcdchomp> tag defined!"); }
       spheres = d->spheres;
    }
    
@@ -387,7 +388,7 @@ bool mod::viewspheres(std::ostream& sout, std::istream& sinput)
       /* set its dimensions */
       {
          std::vector< OpenRAVE::Vector > svec;
-         Transform t = r->GetLink(s->linkname)->GetTransform();
+         OpenRAVE::Transform t = r->GetLink(s->linkname)->GetTransform();
          OpenRAVE::Vector v = t * OpenRAVE::Vector(s->pos); /* copies 3 values */
          v.w = s->radius; /* radius */
          svec.push_back(v);
@@ -402,40 +403,45 @@ bool mod::viewspheres(std::ostream& sout, std::istream& sinput)
 
 /* computedistancefield robot Herb2
  * computes a distance field in the vicinity of the passed robot
+ * 
+ * note: does aabb include disabled bodies? probably, but we might hope not ...
  * */
 bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
 {
+   int i;
    int err;
-   EnvironmentMutex::scoped_lock lockenv;
-   RobotBase * robot;
+   OpenRAVE::EnvironmentMutex::scoped_lock lockenv;
+   OpenRAVE::KinBodyPtr kinbody;
    double temp;
    OpenRAVE::KinBodyPtr cube;
    size_t idx;
    struct cd_grid * g_obs;
+   int gsdf_sizearray[3];
+   OpenRAVE::geometry::aabb< OpenRAVE::dReal > aabb;
+   double pose_world_gsdf[7];
+   double pose_cube[7];
    
    /* lock environment */
-   lockenv = EnvironmentMutex::scoped_lock(this->e->GetMutex());
+   lockenv = OpenRAVE::EnvironmentMutex::scoped_lock(this->e->GetMutex());
    
-   robot = 0;
-   
-   /* parse arguments into robot */
+   /* parse arguments into kinbody */
    {
       char * in;
       char * cur;
       char buf[64];
       int len;
       in = str_from_istream(sinput);
-      if (!in) { throw openrave_exception("Out of memory!"); }
+      if (!in) { throw OpenRAVE::openrave_exception("Out of memory!"); }
       cur = in;
       while (1)
       {
-         if (strp_skipprefix(&cur, (char *)"robot"))
+         if (strp_skipprefix(&cur, (char *)"kinbody"))
          {
-            if (robot) { free(in); throw openrave_exception("Only one robot can be passed!"); }
+            if (kinbody) { free(in); throw OpenRAVE::openrave_exception("Only one kinbody can be passed!"); }
             sscanf(cur, " %s%n", buf, &len); cur += len;
-            robot = this->e->GetRobot(buf).get();
-            if (!robot) { free(in); throw openrave_exception("Could not find robot with that name!"); }
-            RAVELOG_INFO("Using robot %s.\n", robot->GetName().c_str());
+            kinbody = this->e->GetKinBody(buf);
+            if (!kinbody.get()) { free(in); throw OpenRAVE::openrave_exception("Could not find kinbody with that name!"); }
+            RAVELOG_INFO("Using kinbody %s.\n", kinbody->GetName().c_str());
             continue;
          }
          break;
@@ -445,22 +451,44 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
    }
    
    /* check that we have everything */
-   if (!robot) throw openrave_exception("Did not pass all required args!");
-
-   /* the grid position is 2m in -x, 2m in -y, and 1m in -z from the robot location */
-   Transform t = robot->GetTransform();
-   this->g_pos[0] = t.trans.x - 2.0;
-   this->g_pos[1] = t.trans.y - 2.0;
-   this->g_pos[2] = t.trans.z - 1.0;
+   if (!kinbody.get()) throw OpenRAVE::openrave_exception("Did not pass all required args!");
    
-   /* Create a new grid located around the current robot; 100x100x100
+   strcpy(this->kinbody_gsdf, kinbody->GetName().c_str());
+
+   /* compute aabb when object is at world origin */
+   {
+      OpenRAVE::KinBody::KinBodyStateSaver statesaver(kinbody);
+      kinbody->SetTransform(OpenRAVE::Transform());
+      aabb = kinbody->ComputeAABB();
+   }
+   printf("    pos: %f %f %f\n", aabb.pos[0], aabb.pos[1], aabb.pos[2]);
+   printf("extents: %f %f %f\n", aabb.extents[0], aabb.extents[1], aabb.extents[2]);
+
+   /* calculate dimension sizes (number of cells) */
+   for (i=0; i<3; i++)
+   {
+      gsdf_sizearray[i] = (int) ceil((aabb.extents[i]+0.3) / CUBE_EXTENT); /* 0.3m padding on each side, 4cm on a side */
+      printf("gsdf_sizearray[%d]: %d\n", i, gsdf_sizearray[i]);
+   }
+   
+   /* Create a new grid located around the current kinbody; 100x100x100
     * for now, this is axis-aligned.
     * the box is centered around (0,0,1).
     * the box has extents +/- 2.0m, so each cube is 4cm on a side. */
    temp = 1.0; /* free space */
-   err = cd_grid_create(&g_obs, &temp, sizeof(double), 3, 100, 100, 100);
-   if (err) throw openrave_exception("Not enough memory for distance field!");
-   cd_mat_fill(g_obs->lengths, 3, 1, 4.0, 4.0, 4.0);
+   err = cd_grid_create_sizearray(&g_obs, &temp, sizeof(double), 3, gsdf_sizearray);
+   if (err) throw OpenRAVE::openrave_exception("Not enough memory for distance field!");
+   
+   /* set side lengths */
+   for (i=0; i<3; i++)
+      g_obs->lengths[i] = gsdf_sizearray[i] * 2.0 * CUBE_EXTENT;
+   cd_mat_vec_print("g_obs->lengths: ", g_obs->lengths, 3);
+   
+   /* set pose of grid w.r.t. kinbody frame */
+   cd_kin_pose_identity(pose_gsdf);
+   for (i=0; i<3; i++)
+      pose_gsdf[i] = aabb.pos[i] - 0.5 * g_obs->lengths[i];
+   cd_mat_vec_print("pose_gsdf: ",pose_gsdf, 7);
    
    /* create the cube */
    cube = OpenRAVE::RaveCreateKinBody(this->e);
@@ -468,44 +496,62 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
    
    /* set its dimensions */
    {
-      std::vector<AABB> vaabbs(1);
-      vaabbs[0].extents = OpenRAVE::Vector(0.02, 0.02, 0.02); /* extents = half side lengths */
+      std::vector<OpenRAVE::AABB> vaabbs(1);
+      vaabbs[0].extents = OpenRAVE::Vector(CUBE_EXTENT, CUBE_EXTENT, CUBE_EXTENT); /* extents = half side lengths */
       cube->InitFromBoxes(vaabbs, 1);
    }
    
    /* add the cube */
    this->e->AddKinBody(cube);
+   
+   /* get the pose_world_gsdf = pose_world_kinbody * pose_kinbody_gsdf */
+   {
+      OpenRAVE::Transform t = kinbody->GetTransform();
+      pose_world_gsdf[0] = t.trans.x;
+      pose_world_gsdf[1] = t.trans.y;
+      pose_world_gsdf[2] = t.trans.z;
+      pose_world_gsdf[3] = t.rot.y;
+      pose_world_gsdf[4] = t.rot.z;
+      pose_world_gsdf[5] = t.rot.w;
+      pose_world_gsdf[6] = t.rot.x;
+      cd_kin_pose_compose(pose_world_gsdf, pose_gsdf, pose_world_gsdf);
+   }
 
-   int cols = 0;
+   int collisions = 0;
    
    /* go through the grid, testing for collision as we go;
     * collisions are HUGE_VAL, free are 1.0 */
    printf("computing occupancy grid ...\n");
    for (idx=0; idx<g_obs->ncells; idx++)
    {
-      double center[3];
-      Transform t;
+      OpenRAVE::Transform t;
       
       if (idx % 100000 == 0)
          printf("idx=%d ...\n", (int)idx);
       
       /* set cube location */
       t.identity();
-      cd_grid_center_index(g_obs, idx, center);
-      t.trans.x = this->g_pos[0] + center[0];
-      t.trans.y = this->g_pos[1] + center[1];
-      t.trans.z = this->g_pos[2] + center[2];
+      cd_kin_pose_identity(pose_cube);
+      cd_grid_center_index(g_obs, idx, pose_cube);
+      cd_kin_pose_compose(pose_world_gsdf, pose_cube, pose_cube);
+      t.trans.x = pose_cube[0];
+      t.trans.y = pose_cube[1];
+      t.trans.z = pose_cube[2];
+      t.rot.y = pose_cube[3];
+      t.rot.z = pose_cube[4];
+      t.rot.w = pose_cube[5];
+      t.rot.x = pose_cube[6];
       cube->SetTransform(t);
       
       /* do collision check */
       if (this->e->CheckCollision(cube))
       {
          *(double *)cd_grid_get_index(g_obs, idx) = HUGE_VAL;
-         cols++;
+         collisions++;
       }
    }
 
-   printf("found %d collisions!\n",cols);
+   printf("found %d/%d collisions!\n", collisions, g_obs->ncells);
    
    /* remove cube */
    this->e->Remove(cube);
@@ -537,125 +583,52 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
 struct cost_helper
 {
    int n; /* config space dimensionality */
-   double * g_pos;
+   double pose_world_gsdf[7];
+   double pose_gsdf_world[7];
    struct cd_grid * g_sdf;
-   RobotBase * r;
+   OpenRAVE::RobotBase * r;
    int * adofindices;
    struct sphere * spheres;
    double * J; /* space for the jacobian; 3xn */
    double * J2;
    
    /* ugh */
-   EnvironmentBasePtr e;
+   OpenRAVE::EnvironmentBasePtr e;
 };
 
-/* cost over a bunch of body points */
-int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double * costp)
+int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double * costp, double * c_grad)
 {
    int i;
    int j;
    double x_vel[3];
+   double x_vel_norm;
    double g_point[3];
    double dist;
    double cost;
    double cost_sphere;
-   struct sphere * s;
-   struct sphere * s2;
-   
-   /* put the robot in the config */
-   std::vector<dReal> vec(c_point, c_point+h->n);
-   h->r->SetActiveDOFValues(vec);
-
-   cost = 0.0;
-   
-   for (s=h->spheres; s; s=s->next)
-   {
-      /* get sphere center */
-      Transform t = h->r->GetLink(s->linkname)->GetTransform();
-      OpenRAVE::Vector v = t * OpenRAVE::Vector(s->pos); /* copies 3 values */
-      
-      /* compute the manipulator jacobian at this point, at this link */
-      boost::multi_array< dReal, 2 > orjacobian;
-      h->r->CalculateJacobian(s->linkindex, v, orjacobian);
-      /* copy the active columns of orjacobian into our J */
-      for (i=0; i<3; i++)
-         for (j=0; j<h->n; j++)
-            h->J[i*h->n+j] = orjacobian[i][h->adofindices[j]];
-      /* compute the current workspace velocity of the sphere */
-      cblas_dgemv(CblasRowMajor, CblasNoTrans, 3, h->n,
-         1.0, h->J,h->n, c_vel,1, 0.0, x_vel,1);
-      
-      /* transform into grid frame */
-      g_point[0] = v.x - h->g_pos[0];
-      g_point[1] = v.y - h->g_pos[1];
-      g_point[2] = v.z - h->g_pos[2];
-      /* get sdf value (from interp) */
-      cd_grid_double_interp(h->g_sdf, g_point, &dist);
-      /* subtract radius to get distance of closest sphere point to closest obstacle */
-      dist -= s->radius;
-      
-      /* convert to a cost */
-      if (dist < 0.0)
-         cost_sphere = OBS_FACTOR * (0.5 * EPSILON - dist);
-      else if (dist < EPSILON)
-         cost_sphere = OBS_FACTOR * (0.5/EPSILON) * (dist-EPSILON) * (dist-EPSILON);
-      else
-         cost_sphere = 0.0;
-      
-      /* consider effects from all other spheres (i.e. self collision) */
-      for (s2=h->spheres; s2; s2=s2->next)
-      {
-         /* skip spheres on the same link */
-         if (s->linkindex == s2->linkindex) continue;
-         
-         /* skip spheres far enough away from us */
-         dist = s->radius + s2->radius + EPSILON_SELF;
-         OpenRAVE::Vector v_from_other = v - h->r->GetLink(s2->linkname)->GetTransform() * OpenRAVE::Vector(s2->pos);
-         if (v_from_other.lengthsqr3() > dist*dist) continue;
-         
-         /* compute the cost */
-         dist = sqrt(v_from_other.lengthsqr3()) - s->radius - s2->radius;
-         if (dist < 0.0)
-            cost_sphere += OBS_FACTOR_SELF * (0.5 * EPSILON_SELF - dist);
-         else
-            cost_sphere += OBS_FACTOR_SELF * (0.5/EPSILON_SELF) * (dist-EPSILON_SELF) * (dist-EPSILON_SELF);
-      }
-      
-      /* scale by sphere velocity */
-      cost_sphere *= cblas_dnrm2(3, x_vel, 1);
-      cost += cost_sphere;
-   }
-   
-   *costp = cost;
-   return 0;
-}
-
-int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, double * c_grad)
-{
-   int i;
-   int j;
-   double x_vel[3];
-   double g_point[3];
-   double dist;
    double g_grad[3];
    double x_grad[3];
    double proj;
    double x_vel2;
-   boost::multi_array< dReal, 2 > orjacobian;
+   boost::multi_array< OpenRAVE::dReal, 2 > orjacobian;
    struct sphere * s;
    struct sphere * s2;
    
    /* put the robot in the config */
-   std::vector<dReal> vec(c_point, c_point+h->n);
+   std::vector<OpenRAVE::dReal> vec(c_point, c_point+h->n);
    h->r->SetActiveDOFValues(vec);
    
-   /* start with a zero config-space gradient */
-   cd_mat_set_zero(c_grad, h->n, 1);
+   /* start with a zero cost and config-space gradient */
+   cost = 0.0;
+   if (c_grad) cd_mat_set_zero(c_grad, h->n, 1);
    
+   /* the cost and its gradient are summed over each sphere on the robot */
    for (s=h->spheres; s; s=s->next)
    {
+      cost_sphere = 0.0;
+      
       /* get sphere center */
-      Transform t = h->r->GetLink(s->linkname)->GetTransform();
+      OpenRAVE::Transform t = h->r->GetLink(s->linkname)->GetTransform();
       OpenRAVE::Vector v = t * OpenRAVE::Vector(s->pos); /* copies 3 values */
 
       /* compute the manipulator jacobian at this point, at this link */
@@ -667,39 +640,55 @@ int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, d
       /* compute the current workspace velocity of the sphere */
       cblas_dgemv(CblasRowMajor, CblasNoTrans, 3, h->n,
          1.0, h->J,h->n, c_vel,1, 0.0, x_vel,1);
+      x_vel_norm = cblas_dnrm2(3, x_vel, 1);
 
       /* transform sphere center into grid frame */
-      g_point[0] = v.x - h->g_pos[0];
-      g_point[1] = v.y - h->g_pos[1];
-      g_point[2] = v.z - h->g_pos[2];
+      g_point[0] = v.x;
+      g_point[1] = v.y;
+      g_point[2] = v.z;
+      cd_kin_pose_compos(h->pose_gsdf_world, g_point, g_point);
       /* get sdf value (from interp) */
       cd_grid_double_interp(h->g_sdf, g_point, &dist);
-      /* get sdf gradient */
-      cd_grid_double_grad(h->g_sdf, g_point, g_grad); /* this will be a unit vector away from closest obs */
       /* subtract radius to get distance of closest sphere point to closest obstacle */
       dist -= s->radius;
-      /* convert sdf g_grad to x_grad (w.r.t. cost) according to dist */
-      cd_mat_memcpy(x_grad, g_grad, 3, 1);
-      if (dist < 0.0)
-         cd_mat_scale(x_grad, 3, 1, -1.0);
-      else if (dist < EPSILON)
-         cd_mat_scale(x_grad, 3, 1, dist/EPSILON - 1.0);
-      else
-         cd_mat_set_zero(x_grad, 3, 1);
-      cd_mat_scale(x_grad, 3, 1, OBS_FACTOR);
       
-      /* subtract from x_grad vector projection onto x_vel */
-      x_vel2 = cblas_ddot(3, x_vel,1, x_vel,1);
-      if (x_vel2 > 0.000001)
+      if (costp)
       {
-         proj = cblas_ddot(3, x_grad,1, x_vel,1) / x_vel2;
-         cblas_daxpy(3, -proj, x_vel,1, x_grad,1);
+         /* convert to a cost */
+         if (dist < 0.0)
+            cost_sphere += OBS_FACTOR * (0.5 * EPSILON - dist);
+         else if (dist < EPSILON)
+            cost_sphere += OBS_FACTOR * (0.5/EPSILON) * (dist-EPSILON) * (dist-EPSILON);
       }
       
-      /* multiply into c_grad through JT */
-      cblas_dgemv(CblasRowMajor, CblasTrans, 3, h->n,
-         1.0, h->J,h->n, x_grad,1, 1.0, c_grad,1);
-
+      if (c_grad)
+      {
+         /* get sdf gradient */
+         cd_grid_double_grad(h->g_sdf, g_point, g_grad); /* this will be a unit vector away from closest obs */
+         cd_kin_pose_compose_vec(h->pose_world_gsdf, g_grad, g_grad); /* now in world frame */
+         
+         /* convert sdf g_grad to x_grad (w.r.t. cost) according to dist */
+         cd_mat_memcpy(x_grad, g_grad, 3, 1);
+         if (dist < 0.0)
+            cd_mat_scale(x_grad, 3, 1, -1.0);
+         else if (dist < EPSILON)
+            cd_mat_scale(x_grad, 3, 1, dist/EPSILON - 1.0);
+         else
+            cd_mat_set_zero(x_grad, 3, 1);
+         cd_mat_scale(x_grad, 3, 1, OBS_FACTOR);
+         
+         /* subtract from x_grad vector projection onto x_vel */
+         x_vel2 = cblas_ddot(3, x_vel,1, x_vel,1);
+         if (x_vel2 > 0.000001)
+         {
+            proj = cblas_ddot(3, x_grad,1, x_vel,1) / x_vel2;
+            cblas_daxpy(3, -proj, x_vel,1, x_grad,1);
+         }
+         
+         /* multiply into c_grad through JT */
+         cblas_dgemv(CblasRowMajor, CblasTrans, 3, h->n,
+            1.0, h->J,h->n, x_grad,1, 1.0, c_grad,1);
+      }
 
       /* consider effects from all other spheres (i.e. self collision) */
       for (s2=h->spheres; s2; s2=s2->next)
@@ -712,45 +701,66 @@ int sphere_cost_grad(struct cost_helper * h, double * c_point, double * c_vel, d
          OpenRAVE::Vector v_from_other = v - h->r->GetLink(s2->linkname)->GetTransform() * OpenRAVE::Vector(s2->pos);
          if (v_from_other.lengthsqr3() > dist*dist) continue;
          
-         /* make unit vector (g_grad) away from other sphere */
-         dist = sqrt(v_from_other.lengthsqr3());
-         g_grad[0] = v_from_other[0] / dist;
-         g_grad[1] = v_from_other[1] / dist;
-         g_grad[2] = v_from_other[2] / dist;
-         
-         /* compute distance in collision */
-         dist -= s->radius - s2->radius;
-         
-         /* convert sdf g_grad to x_grad (w.r.t. cost) according to dist */
-         cd_mat_memcpy(x_grad, g_grad, 3, 1);
-         if (dist < 0.0)
-            cd_mat_scale(x_grad, 3, 1, -1.0);
-         else if (dist < EPSILON_SELF)
-            cd_mat_scale(x_grad, 3, 1, dist/EPSILON_SELF - 1.0);
-         cd_mat_scale(x_grad, 3, 1, OBS_FACTOR_SELF);
-         
-         /* subtract from x_grad vector projection onto x_vel */
-         x_vel2 = cblas_ddot(3, x_vel,1, x_vel,1);
-         if (x_vel2 > 0.000001)
+         if (costp)
          {
-            proj = cblas_ddot(3, x_grad,1, x_vel,1) / x_vel2;
-            cblas_daxpy(3, -proj, x_vel,1, x_grad,1);
+            /* compute the cost */
+            dist = sqrt(v_from_other.lengthsqr3()) - s->radius - s2->radius;
+            if (dist < 0.0)
+               cost_sphere += OBS_FACTOR_SELF * (0.5 * EPSILON_SELF - dist);
+            else
+               cost_sphere += OBS_FACTOR_SELF * (0.5/EPSILON_SELF) * (dist-EPSILON_SELF) * (dist-EPSILON_SELF);
          }
          
-         /* J2 = J - jacobian of other sphere*/
-         cd_mat_memcpy(h->J2, h->J, 3, h->n);
-         h->r->CalculateJacobian(s2->linkindex, v, orjacobian);
-         for (i=0; i<3; i++)
-            for (j=0; j<h->n; j++)
-               h->J2[i*h->n+j] -= orjacobian[i][h->adofindices[j]];
-         
-         /* multiply into c_grad through JT */
-         /* I HAVE NO IDEA WHY THERES A -1 HERE! */
-         cblas_dgemv(CblasRowMajor, CblasTrans, 3, h->n,
-            -1.0, h->J2,h->n, x_grad,1, 1.0, c_grad,1);
+         if (c_grad)
+         {
+            /* make unit vector (g_grad) away from other sphere */
+            dist = sqrt(v_from_other.lengthsqr3());
+            g_grad[0] = v_from_other[0] / dist;
+            g_grad[1] = v_from_other[1] / dist;
+            g_grad[2] = v_from_other[2] / dist;
+            
+            /* compute distance in collision */
+            dist -= s->radius - s2->radius;
+            
+            /* convert sdf g_grad to x_grad (w.r.t. cost) according to dist */
+            cd_mat_memcpy(x_grad, g_grad, 3, 1);
+            if (dist < 0.0)
+               cd_mat_scale(x_grad, 3, 1, -1.0);
+            else if (dist < EPSILON_SELF)
+               cd_mat_scale(x_grad, 3, 1, dist/EPSILON_SELF - 1.0);
+            cd_mat_scale(x_grad, 3, 1, OBS_FACTOR_SELF);
+            
+            /* subtract from x_grad vector projection onto x_vel */
+            x_vel2 = cblas_ddot(3, x_vel,1, x_vel,1);
+            if (x_vel2 > 0.000001)
+            {
+               proj = cblas_ddot(3, x_grad,1, x_vel,1) / x_vel2;
+               cblas_daxpy(3, -proj, x_vel,1, x_grad,1);
+            }
+            
+            /* J2 = J - jacobian of other sphere*/
+            cd_mat_memcpy(h->J2, h->J, 3, h->n);
+            h->r->CalculateJacobian(s2->linkindex, v, orjacobian);
+            for (i=0; i<3; i++)
+               for (j=0; j<h->n; j++)
+                  h->J2[i*h->n+j] -= orjacobian[i][h->adofindices[j]];
+            
+            /* multiply into c_grad through JT */
+            /* I HAVE NO IDEA WHY THERES A -1 HERE! */
+            cblas_dgemv(CblasRowMajor, CblasTrans, 3, h->n,
+               -1.0, h->J2,h->n, x_grad,1, 1.0, c_grad,1);
+         }
+      }
+      
+      if (costp)
+      {
+         /* scale by sphere velocity */
+         cost_sphere *= x_vel_norm;
+         cost += cost_sphere;
       }
    }
    
+   if (costp) *costp = cost;
    return 0;
 }
 
@@ -765,9 +775,9 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    int j;
    int iter;
    int err;
-   EnvironmentMutex::scoped_lock lockenv;
+   OpenRAVE::EnvironmentMutex::scoped_lock lockenv;
    /* parameters from the command line */
-   RobotBasePtr r;
+   OpenRAVE::RobotBasePtr r;
    int n_dof;
    double * adofgoal;
    int n_adofgoal;
@@ -779,14 +789,14 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    struct cost_helper h;
    double * Gjlimit;
    double * GjlimitAinv;
-   std::vector< dReal > vec_jlimit_lower;
-   std::vector< dReal > vec_jlimit_upper;
+   std::vector< OpenRAVE::dReal > vec_jlimit_lower;
+   std::vector< OpenRAVE::dReal > vec_jlimit_upper;
    struct sphere * s;
    struct sphere * spheres;
-   TrajectoryBasePtr starttraj;
+   OpenRAVE::TrajectoryBasePtr starttraj;
    
    /* lock environment */
-   lockenv = EnvironmentMutex::scoped_lock(this->e->GetMutex());
+   lockenv = OpenRAVE::EnvironmentMutex::scoped_lock(this->e->GetMutex());
    
    /*r = 0;*/
    adofgoal = 0;
@@ -800,25 +810,25 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
       char buf[64];
       int len;
       in = str_from_istream(sinput);
-      if (!in) throw openrave_exception("Out of memory!");
+      if (!in) throw OpenRAVE::openrave_exception("Out of memory!");
       cur = in;
       while (1)
       {
          if (strp_skipprefix(&cur, (char *)"robot"))
          {
-            if (r.get()) { free(adofgoal); free(in); throw openrave_exception("Only one robot can be passed!"); }
+            if (r.get()) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("Only one robot can be passed!"); }
             sscanf(cur, " %s%n", buf, &len); cur += len;
             r = this->e->GetRobot(buf)/*.get()*/;
-            if (!r.get()) { free(adofgoal); free(in); throw openrave_exception("Could not find robot that name!"); }
+            if (!r.get()) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("Could not find robot that name!"); }
             RAVELOG_INFO("Using robot %s.\n", r->GetName().c_str());
             continue;
          }
          if (strp_skipprefix(&cur, (char *)"adofgoal"))
          {
-            if (adofgoal) { free(adofgoal); free(in); throw openrave_exception("Only one adofgoal can be passed!"); }
-            if (starttraj.get()) { free(adofgoal); free(in); throw openrave_exception("Cannot pass both adofgoal and starttraj!"); }
+            if (adofgoal) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("Only one adofgoal can be passed!"); }
+            if (starttraj.get()) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("Cannot pass both adofgoal and starttraj!"); }
             sscanf(cur, " %d%n", &n_adofgoal, &len); cur += len;
-            if (n_adofgoal <= 0) { free(adofgoal); free(in); throw openrave_exception("n_adofgoal must be >0!"); }
+            if (n_adofgoal <= 0) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("n_adofgoal must be >0!"); }
             adofgoal = (double *) malloc(n_adofgoal * sizeof(double));
             for (j=0; j<n_adofgoal; j++)
             {
@@ -830,26 +840,26 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          if (strp_skipprefix(&cur, (char *)"n_iter"))
          {
             sscanf(cur, " %d%n", &n_iter, &len); cur += len;
-            if (n_iter < 0) { free(adofgoal); free(in); throw openrave_exception("n_iter must be >=0!"); }
+            if (n_iter < 0) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("n_iter must be >=0!"); }
             continue;
          }
          if (strp_skipprefix(&cur, (char *)"lambda"))
          {
             sscanf(cur, " %lf%n", &lambda, &len); cur += len;
-            if (lambda < 0.01) { free(adofgoal); free(in); throw openrave_exception("lambda must be >=0.01!"); }
+            if (lambda < 0.01) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("lambda must be >=0.01!"); }
             continue;
          }
          if (strp_skipprefix(&cur, (char *)"starttraj"))
          {
             int ser_len;
-            if (starttraj.get()) { free(adofgoal); free(in); throw openrave_exception("Only one starttraj can be passed!"); }
-            if (adofgoal) { free(adofgoal); free(in); throw openrave_exception("Cannot pass both adofgoal and starttraj!"); }
+            if (starttraj.get()) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("Only one starttraj can be passed!"); }
+            if (adofgoal) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("Cannot pass both adofgoal and starttraj!"); }
             sscanf(cur, " %d%n", &ser_len, &len); cur += len;
             /* skip a space */
-            if (*cur != ' ') { free(adofgoal); free(in); throw openrave_exception("syntax is starttraj numchars <string>!"); }
+            if (*cur != ' ') { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("syntax is starttraj numchars <string>!"); }
             cur++;
             for (j=0; j<ser_len; j++) if (!cur[j]) break;
-            if (j<ser_len) { free(adofgoal); free(in); throw openrave_exception("not enough characters in string!"); }
+            if (j<ser_len) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("not enough characters in string!"); }
             /* create trajectory */
             starttraj = RaveCreateTrajectory(this->e);
             std::istringstream ser_iss(std::string(cur,ser_len));
@@ -866,18 +876,18 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    /* check validity of input arguments ... */
    
    if (!r.get())
-      { free(adofgoal); throw openrave_exception("Did not pass a robot!"); }
+      { free(adofgoal); throw OpenRAVE::openrave_exception("Did not pass a robot!"); }
    
    if (!adofgoal && !starttraj.get())
-      { free(adofgoal); throw openrave_exception("Did not pass either adofgoal or starttraj!"); }
+      { free(adofgoal); throw OpenRAVE::openrave_exception("Did not pass either adofgoal or starttraj!"); }
    
    if (!this->g_sdf)
-      { free(adofgoal); throw openrave_exception("A signed distance field has not yet been computed!"); }
+      { free(adofgoal); throw OpenRAVE::openrave_exception("A signed distance field has not yet been computed!"); }
    
    /* ensure the robot has spheres defined */
    {
       boost::shared_ptr<rdata> d = boost::dynamic_pointer_cast<rdata>(r->GetReadableInterface("orcdchomp"));
-      if (!d) { free(adofgoal); throw openrave_exception("robot does not have a <orcdchomp> tag defined!"); }
+      if (!d) { free(adofgoal); throw OpenRAVE::openrave_exception("robot does not have a <orcdchomp> tag defined!"); }
       spheres = d->spheres;
    }
    
@@ -899,7 +909,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    /* check that n_adofgoal matches active dof */
    if (adofgoal && (n_dof != n_adofgoal))
       { printf("n_dof: %d; n_adofgoal: %d\n", n_dof, n_adofgoal);
-         free(adofgoal); throw openrave_exception("size of adofgoal does not match active dofs!"); }
+         free(adofgoal); throw OpenRAVE::openrave_exception("size of adofgoal does not match active dofs!"); }
    
    /* check that starttraj has the right ConfigurationSpecification? */
    
@@ -916,18 +926,30 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    h.n = n_dof;
    h.r = r.get();
    h.spheres = spheres;
-   h.g_pos = this->g_pos;
    h.g_sdf = this->g_sdf;
    h.adofindices = adofindices;
    h.J = (double *) malloc(3*n_dof*sizeof(double));
    h.J2 = (double *) malloc(3*n_dof*sizeof(double));
    h.e = this->e;
    
+   /* compute location of the world in g_sdf frame */
+   {
+      OpenRAVE::Transform t = this->e->GetKinBody(this->kinbody_gsdf)->GetTransform();
+      h.pose_world_gsdf[0] = t.trans.x;
+      h.pose_world_gsdf[1] = t.trans.y;
+      h.pose_world_gsdf[2] = t.trans.z;
+      h.pose_world_gsdf[3] = t.rot.y;
+      h.pose_world_gsdf[4] = t.rot.z;
+      h.pose_world_gsdf[5] = t.rot.w;
+      h.pose_world_gsdf[6] = t.rot.x;
+      cd_kin_pose_compose(h.pose_world_gsdf, this->pose_gsdf, h.pose_world_gsdf);
+      cd_kin_pose_invert(h.pose_world_gsdf, h.pose_gsdf_world);
+   }
+   
    /* ok, ready to go! create a chomp solver */
    err = cd_chomp_create(&c, n_dof, N_INTPOINTS, 1, &h,
-      (int (*)(void *, double *, double *, double *))sphere_cost,
-      (int (*)(void *, double *, double *, double *))sphere_cost_grad);
-   if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofgoal); free(adofindices); throw openrave_exception("Error creating chomp instance."); }
+      (int (*)(void *, double *, double *, double *, double *))sphere_cost);
+   if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofgoal); free(adofindices); throw OpenRAVE::openrave_exception("Error creating chomp instance."); }
    /*c->lambda = 1000000.0;*/
    c->lambda = lambda;
    /* this parameter affects how fast things settle;
@@ -940,7 +962,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
       RAVELOG_INFO("Initializing from a passed trajectory ...\n");
       for (i=0; i<N_INTPOINTS+2; i++)
       {
-         std::vector<dReal> vec;
+         std::vector<OpenRAVE::dReal> vec;
          starttraj->Sample(vec, i*starttraj->GetDuration()/(N_INTPOINTS+1), r->GetActiveConfigurationSpecification());
          for (j=0; j<n_dof; j++)
             c->T_ext_points[i][j] = vec[j];
@@ -948,7 +970,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    }
    else
    {
-      std::vector<dReal> vec;
+      std::vector<OpenRAVE::dReal> vec;
       double percentage;
       RAVELOG_INFO("Initializing from a straight-line trajectory ...\n");
       /* starting point */
@@ -970,7 +992,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    
    /* Initialize CHOMP */
    err = cd_chomp_init(c);
-   if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofindices); cd_chomp_destroy(c); throw openrave_exception("Error initializing chomp instance."); }
+   if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofindices); cd_chomp_destroy(c); throw OpenRAVE::openrave_exception("Error initializing chomp instance."); }
    
    printf("iterating CHOMP once ...\n");
    for (iter=0; iter<n_iter; iter++)
@@ -1035,11 +1057,11 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    printf("done!\n");
    
    /* create an openrave trajectory from the result, and send to sout */
-   TrajectoryBasePtr t = RaveCreateTrajectory(this->e);
+   OpenRAVE::TrajectoryBasePtr t = OpenRAVE::RaveCreateTrajectory(this->e);
    t->Init(r->GetActiveConfigurationSpecification());
    for (i=0; i<N_INTPOINTS+2; i++)
    {
-      std::vector<dReal> vec(c->T_ext_points[i], c->T_ext_points[i]+n_dof);
+      std::vector<OpenRAVE::dReal> vec(c->T_ext_points[i], c->T_ext_points[i]+n_dof);
       t->Insert(i, vec);
    }
    
@@ -1054,17 +1076,17 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    printf("checking trajectory for collision ...\n");
    {
       double time;
-      CollisionReportPtr report(new CollisionReport());
+      OpenRAVE::CollisionReportPtr report(new OpenRAVE::CollisionReport());
       for (time=0.0; time<t->GetDuration(); time+=0.01)
       {
-         std::vector< dReal > point;
+         std::vector< OpenRAVE::dReal > point;
          t->Sample(point, time);
          r->SetActiveDOFValues(point);
          if (this->e->CheckCollision(r,report))
          {
             RAVELOG_ERROR("Collision: %s\n", report->__str__().c_str());
 #if 1
-            { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofindices); cd_chomp_destroy(c); throw openrave_exception("Resulting trajectory is in collision!"); }
+            { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofindices); cd_chomp_destroy(c); throw OpenRAVE::openrave_exception("Resulting trajectory is in collision!"); }
 #endif
          }
       }

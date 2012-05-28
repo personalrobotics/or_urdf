@@ -15,13 +15,13 @@ def viewspheres(mod, robot=None):
          cmd += ' robot %s' % robot
    return mod.SendCommand(cmd)
 
-def computedistancefield(mod, robot=None):
+def computedistancefield(mod, kinbody=None):
    cmd = 'computedistancefield'
-   if robot is not None:
-      if hasattr(robot,'GetName'):
-         cmd += ' robot %s' % robot.GetName()
+   if kinbody is not None:
+      if hasattr(kinbody,'GetName'):
+         cmd += ' kinbody %s' % kinbody.GetName()
       else:
-         cmd += ' robot %s' % robot
+         cmd += ' kinbody %s' % kinbody
    return mod.SendCommand(cmd)
 
 def runchomp(mod, robot=None, adofgoal=None, n_iter=None, lambda_=None, starttraj=None):
