@@ -436,6 +436,7 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
 {
    int i;
    int j;
+   int err;
    double x_vel[3];
    double x_vel_norm;
    double g_point[3];
@@ -491,12 +492,20 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
          g_point[2] = v.z;
          cd_kin_pose_compos(h->rsdfs[i].pose_gsdf_world, g_point, g_point);
          /* get sdf value (from interp) */
-         cd_grid_double_interp(h->rsdfs[i].grid, g_point, &dist);
+         err = cd_grid_double_interp(h->rsdfs[i].grid, g_point, &dist);
+         if (err)
+            continue; /* not inside of this distance field at all! */
          if (dist < sdfi_best_dist)
          {
             sdfi_best_dist = dist;
             sdfi_best = i;
          }
+      }
+      if (sdfi_best == -1)
+      {
+         /* this sphere is not inside any distance field;
+          * for now, assume that it contributes no cost or gradient. */
+         continue;
       }
 
       /* transform sphere center into grid frame */
