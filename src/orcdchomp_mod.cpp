@@ -1,4 +1,5 @@
 
+#include <time.h>
 #include <cblas.h>
 
 extern "C" {
@@ -208,7 +209,7 @@ bool mod::viewspheres(std::ostream& sout, std::istream& sinput)
 
 
 /* computedistancefield robot Herb2
- * computes a distance field in the vicinity of the passed robot
+ * computes a distance field in the vicinity of the passed kinbody
  * 
  * note: does aabb include disabled bodies? probably, but we might hope not ...
  * */
@@ -218,7 +219,10 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
    int err;
    OpenRAVE::EnvironmentMutex::scoped_lock lockenv;
    OpenRAVE::KinBodyPtr kinbody;
+   /* parameters */
    double cube_extent;
+   char cache_filename[1024];
+   /* other */
    double temp;
    OpenRAVE::KinBodyPtr cube;
    size_t idx;
@@ -233,6 +237,7 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
    lockenv = OpenRAVE::EnvironmentMutex::scoped_lock(this->e->GetMutex());
    
    cube_extent = 0.02;
+   cache_filename[0] = 0;
    
    /* parse arguments into kinbody */
    {
@@ -260,6 +265,12 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
             RAVELOG_INFO("Using cube_extent |%f|.\n", cube_extent);
             continue;
          }
+         if (strp_skipprefix(&cur, (char *)"cache_filename"))
+         {
+            sscanf(cur, " %s%n", cache_filename, &len); cur += len;
+            RAVELOG_INFO("Using cache_filename |%1023s|.\n", cache_filename);
+            continue;
+         }
          break;
       }
       if (cur[0]) RAVELOG_WARN("remaining string: |%s|! continuing ...\n", cur);
@@ -269,7 +280,7 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
    /* check that we have everything */
    if (!kinbody.get()) throw OpenRAVE::openrave_exception("Did not pass all required args!");
    
-   /* make sure we don't already have an sdf for this kinbody */
+   /* make sure we don't already have an sdf loaded for this kinbody */
    for (i=0; i<this->n_sdfs; i++)
       if (strcmp(this->sdfs[i].kinbody_name, kinbody->GetName().c_str()) == 0)
          break;
@@ -423,7 +434,9 @@ struct cost_helper
    struct cost_helper_rsdf * rsdfs;
    OpenRAVE::RobotBase * r;
    int * adofindices;
-   struct orcdchomp::sphere * spheres;
+   struct orcdchomp::sphere * spheres_all;
+   int n_spheres_active;
+   struct orcdchomp::sphere ** spheres_active;
    double * J; /* space for the jacobian; 3xn */
    double * J2;
    
@@ -456,6 +469,7 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
    struct orcdchomp::sphere * s2;
    int sdfi_best;
    double sdfi_best_dist;
+   int sai;
    
    /* put the robot in the config */
    std::vector<OpenRAVE::dReal> vec(c_point, c_point+h->n);
@@ -466,8 +480,10 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
    if (c_grad) cd_mat_set_zero(c_grad, h->n, 1);
    
    /* the cost and its gradient are summed over each sphere on the robot */
-   for (s=h->spheres; s; s=s->next)
+   for (sai=0; sai<h->n_spheres_active; sai++)
    {
+      s = h->spheres_active[sai];
+      
       cost_sphere = 0.0;
       
       /* get sphere center */
@@ -561,7 +577,7 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
       }
 
       /* consider effects from all other spheres (i.e. self collision) */
-      for (s2=h->spheres; s2; s2=s2->next)
+      for (s2=h->spheres_all; s2; s2=s2->next)
       {
          /* skip spheres on the same link (their Js would be identical anyways) */
          if (s->linkindex == s2->linkindex) continue;
@@ -658,6 +674,8 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    double epsilon_self;
    double obs_factor;
    double obs_factor_self;
+   int no_collision_exception;
+   int no_report_cost;
    /* stuff we compute later */
    int * adofindices;
    struct cd_chomp * c;
@@ -667,11 +685,15 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    std::vector< OpenRAVE::dReal > vec_jlimit_lower;
    std::vector< OpenRAVE::dReal > vec_jlimit_upper;
    struct orcdchomp::sphere * s;
-   struct orcdchomp::sphere * spheres;
+   struct orcdchomp::sphere * spheres_all;
+   int n_spheres_active;
+   struct orcdchomp::sphere ** spheres_active;
    OpenRAVE::TrajectoryBasePtr starttraj;
    double cost_total;
    double cost_obs;
    double cost_smooth;
+   clock_t clock_start;
+   clock_t clock_end;
    
    /* lock environment */
    lockenv = OpenRAVE::EnvironmentMutex::scoped_lock(this->e->GetMutex());
@@ -685,6 +707,8 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    epsilon_self = 0.04; /* in meters */
    obs_factor = 200.0;
    obs_factor_self = 10.0;
+   no_collision_exception = 0;
+   no_report_cost = 0;
    
    /* parse arguments into robot */
    {
@@ -773,6 +797,16 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
             sscanf(cur, " %lf%n", &obs_factor_self, &len); cur += len;
             continue;
          }
+         if (strp_skipprefix(&cur, (char *)"no_collision_exception"))
+         {
+            no_collision_exception = 1;
+            continue;
+         }
+         if (strp_skipprefix(&cur, (char *)"no_report_cost"))
+         {
+            no_report_cost = 1;
+            continue;
+         }
          break;
       }
       if (cur[0]) RAVELOG_WARN("remaining string: |%s|! continuing ...\n", cur);
@@ -803,17 +837,17 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    {
       boost::shared_ptr<orcdchomp::rdata> d = boost::dynamic_pointer_cast<orcdchomp::rdata>(r->GetReadableInterface("orcdchomp"));
       if (!d) { free(adofgoal); throw OpenRAVE::openrave_exception("robot does not have a <orcdchomp> tag defined!"); }
-      spheres = d->spheres;
+      spheres_all = d->spheres;
    }
    
    n_dof = r->GetActiveDOF();
    
    /* allocate adofindices */
-   adofindices = (int *) malloc(r->GetActiveDOF() * sizeof(int));
+   adofindices = (int *) malloc(n_dof * sizeof(int));
    {
       std::vector<int> vec = r->GetActiveDOFIndices();
       printf("adofindices:");
-      for (i=0; i<r->GetActiveDOF(); i++)
+      for (i=0; i<n_dof; i++)
       {
          adofindices[i] = vec[i];
          printf(" %d", adofindices[i]);
@@ -833,14 +867,31 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    GjlimitAinv = (double *) malloc(n_intpoints * n_dof * sizeof(double));
    r->GetDOFLimits(vec_jlimit_lower, vec_jlimit_upper);
    
-   /* compute sphere link indices */
-   for (s=spheres; s; s=s->next)
+   /* (re-)compute sphere link indices */
+   for (s=spheres_all; s; s=s->next)
       s->linkindex = r->GetLink(s->linkname)->GetIndex();
+   
+   /* compute which spheres are affected by the active dofs */
+   n_spheres_active = 0;
+   spheres_active = 0;
+   for (s=spheres_all; s; s=s->next)
+   {
+      for (i=0; i<n_dof; i++)
+         if (r->DoesAffect(adofindices[i], s->linkindex))
+            break;
+      if (i==n_dof)
+         continue;
+      spheres_active = (struct orcdchomp::sphere **) realloc(spheres_active, (n_spheres_active+1)*sizeof(struct orcdchomp::sphere *));
+      spheres_active[n_spheres_active] = s;
+      n_spheres_active++;
+   }
    
    /* initialize the cost helper */
    h.n = n_dof;
    h.r = r.get();
-   h.spheres = spheres;
+   h.spheres_all = spheres_all;
+   h.n_spheres_active = n_spheres_active;
+   h.spheres_active = spheres_active;
    h.adofindices = adofindices;
    h.J = (double *) malloc(3*n_dof*sizeof(double));
    h.J2 = (double *) malloc(3*n_dof*sizeof(double));
@@ -871,7 +922,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    /* ok, ready to go! create a chomp solver */
    err = cd_chomp_create(&c, n_dof, n_intpoints, 1, &h,
       (int (*)(void *, double *, double *, double *, double *))sphere_cost);
-   if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofgoal); free(adofindices); throw OpenRAVE::openrave_exception("Error creating chomp instance."); }
+   if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofgoal); free(adofindices); free(spheres_active); throw OpenRAVE::openrave_exception("Error creating chomp instance."); }
    /*c->lambda = 1000000.0;*/
    c->lambda = lambda;
    /* this parameter affects how fast things settle;
@@ -914,9 +965,10 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    
    /* Initialize CHOMP */
    err = cd_chomp_init(c);
-   if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofindices); cd_chomp_destroy(c); throw OpenRAVE::openrave_exception("Error initializing chomp instance."); }
+   if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofindices); cd_chomp_destroy(c); free(spheres_active); throw OpenRAVE::openrave_exception("Error initializing chomp instance."); }
    
-   printf("iterating CHOMP once ...\n");
+   RAVELOG_INFO("iterating CHOMP ...\n");
+   clock_start = clock();
    for (iter=0; iter<n_iter; iter++)
    {
 #if 0
@@ -924,8 +976,17 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
       c->lambda = 10.0 * exp(0.1 * iter);
       printf("lambda: %f\n", c->lambda);
 #endif
-      cd_chomp_iterate(c, 1, &cost_total, &cost_obs, &cost_smooth);
-      printf("iter:%2d cost_total:%f cost_obs:%f cost_smooth:%f\n", iter, cost_total, cost_obs, cost_smooth);
+
+      if (no_report_cost)
+      {
+         cd_chomp_iterate(c, 1, 0, 0, 0);
+      }
+      else
+      {
+         cd_chomp_iterate(c, 1, &cost_total, &cost_obs, &cost_smooth);
+         printf("iter:%2d cost_total:%f cost_obs:%f cost_smooth:%f\n", iter, cost_total, cost_obs, cost_smooth);
+      }
+
       
       /* handle joint limits */
       while (1)
@@ -971,11 +1032,14 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
                      GjlimitAinv,1, c->T,1);
       }
    }
+   clock_end = clock();
    
    cd_chomp_iterate(c, 0, &cost_total, &cost_obs, &cost_smooth);
    printf("iter:%2d cost_total:%f cost_obs:%f cost_smooth:%f [FINAL]\n", iter, cost_total, cost_obs, cost_smooth);
    
    printf("done!\n");
+   
+   printf("Clock time for %d iterations: %f\n", iter, (1.0*clock_end/CLOCKS_PER_SEC)-(1.0*clock_start/CLOCKS_PER_SEC));
    
    /* create an openrave trajectory from the result, and send to sout */
    OpenRAVE::TrajectoryBasePtr t = OpenRAVE::RaveCreateTrajectory(this->e);
@@ -1006,9 +1070,8 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          if (this->e->CheckCollision(r,report))
          {
             RAVELOG_ERROR("Collision: %s\n", report->__str__().c_str());
-#if 1
-            { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofindices); cd_chomp_destroy(c); throw OpenRAVE::openrave_exception("Resulting trajectory is in collision!"); }
-#endif
+            if (!no_collision_exception)
+               { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofindices); cd_chomp_destroy(c); free(spheres_active); throw OpenRAVE::openrave_exception("Resulting trajectory is in collision!"); }
          }
       }
    }
@@ -1023,29 +1086,10 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    free(h.J);
    free(h.J2);
    free(adofindices);
+   free(spheres_active);
 
    printf("runchomp done! returning ...\n");
    return true;
 }
 
-
-
-
-
-
 } /* namespace orcdchomp */
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
