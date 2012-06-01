@@ -36,5 +36,4 @@ public:
    int main(const std::string& cmd) { RAVELOG_INFO("module init cmd: %s\n", cmd.c_str()); return 0; }
 };
 
-
 } /* namespace orcdchomp */

@@ -1006,7 +1006,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          if (this->e->CheckCollision(r,report))
          {
             RAVELOG_ERROR("Collision: %s\n", report->__str__().c_str());
-#if 0
+#if 1
             { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofindices); cd_chomp_destroy(c); throw OpenRAVE::openrave_exception("Resulting trajectory is in collision!"); }
 #endif
          }
