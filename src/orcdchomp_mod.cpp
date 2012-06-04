@@ -267,8 +267,8 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
          }
          if (strp_skipprefix(&cur, (char *)"cache_filename"))
          {
-            sscanf(cur, " %s%n", cache_filename, &len); cur += len;
-            RAVELOG_INFO("Using cache_filename |%1023s|.\n", cache_filename);
+            sscanf(cur, " %1023s%n", cache_filename, &len); cur += len;
+            RAVELOG_INFO("Using cache_filename |%s|.\n", cache_filename);
             continue;
          }
          break;
@@ -287,129 +287,179 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
    if (i<this->n_sdfs)
       throw OpenRAVE::openrave_exception("We already have an sdf for this kinbody!");
    
-   /* copy in name */
-   strcpy(sdf_new.kinbody_name, kinbody->GetName().c_str());
+   /* are we making our own sdf object? */
+   sdf_new.grid = 0;
+   
+   /* attempt to load the sdf from file */
+   if (cache_filename[0]) do
+   {
+      FILE * fp;
+      printf("reading sdf from file %s ...\n", cache_filename);
+      fp = fopen(cache_filename, "rb");
+      if (!fp) { printf("could not read from file!\n"); break; }
+      /* read struct sdf */
+      i = fread(sdf_new.kinbody_name, sizeof(sdf_new.kinbody_name), 1, fp);
+      i = fread(sdf_new.pose, sizeof(sdf_new.pose), 1, fp);
+      /* read grid */
+      sdf_new.grid = (struct cd_grid *) malloc(sizeof(struct cd_grid));
+      i = fread(&sdf_new.grid->n, sizeof(sdf_new.grid->n), 1, fp);
+      sdf_new.grid->sizes = (int *) malloc(sizeof(sdf_new.grid->sizes[0]) * sdf_new.grid->n);
+      i = fread(sdf_new.grid->sizes, sizeof(sdf_new.grid->sizes[0]), sdf_new.grid->n, fp);
+      i = fread(&sdf_new.grid->ncells, sizeof(sdf_new.grid->ncells), 1, fp);
+      i = fread(&sdf_new.grid->cell_size, sizeof(sdf_new.grid->cell_size), 1, fp);
+      sdf_new.grid->data = (char *) malloc(sdf_new.grid->cell_size * sdf_new.grid->ncells);
+      i = fread(sdf_new.grid->data, sdf_new.grid->cell_size, sdf_new.grid->ncells, fp);
+      sdf_new.grid->lengths = (double *) malloc(sizeof(sdf_new.grid->lengths[0]) * sdf_new.grid->n);
+      i = fread(sdf_new.grid->lengths, sizeof(sdf_new.grid->lengths[0]), sdf_new.grid->n, fp);
+      fclose(fp);
+   } while (0);
+   
+   /* create sdf_new object */
+   if (!sdf_new.grid)
+   {
+      /* copy in name */
+      strcpy(sdf_new.kinbody_name, kinbody->GetName().c_str());
 
-   /* compute aabb when object is at world origin */
-   {
-      OpenRAVE::KinBody::KinBodyStateSaver statesaver(kinbody);
-      kinbody->SetTransform(OpenRAVE::Transform());
-      aabb = kinbody->ComputeAABB();
-   }
-   printf("    pos: %f %f %f\n", aabb.pos[0], aabb.pos[1], aabb.pos[2]);
-   printf("extents: %f %f %f\n", aabb.extents[0], aabb.extents[1], aabb.extents[2]);
-
-   /* calculate dimension sizes (number of cells) */
-   for (i=0; i<3; i++)
-   {
-      /* 0.15m padding (was 0.3m) on each side
-       * (this is the radius of the biggest herb2 spehere)
-       * (note: extents are half the side lengths!) */
-      gsdf_sizearray[i] = (int) ceil((aabb.extents[i]+1.0) / cube_extent);
-      printf("gsdf_sizearray[%d]: %d\n", i, gsdf_sizearray[i]);
-   }
-   
-   /* Create a new grid located around the current kinbody;
-    * per-dimension sizes set above */
-   temp = 1.0; /* free space */
-   err = cd_grid_create_sizearray(&g_obs, &temp, sizeof(double), 3, gsdf_sizearray);
-   if (err) throw OpenRAVE::openrave_exception("Not enough memory for distance field!");
-   
-   /* set side lengths */
-   for (i=0; i<3; i++)
-      g_obs->lengths[i] = gsdf_sizearray[i] * 2.0 * cube_extent;
-   cd_mat_vec_print("g_obs->lengths: ", g_obs->lengths, 3);
-   
-   /* set pose of grid w.r.t. kinbody frame */
-   cd_kin_pose_identity(sdf_new.pose);
-   for (i=0; i<3; i++)
-      sdf_new.pose[i] = aabb.pos[i] - 0.5 * g_obs->lengths[i];
-   cd_mat_vec_print("pose_gsdf: ", sdf_new.pose, 7);
-   
-   /* create the cube */
-   cube = OpenRAVE::RaveCreateKinBody(this->e);
-   cube->SetName("cube");
-   
-   /* set its dimensions */
-   {
-      std::vector<OpenRAVE::AABB> vaabbs(1);
-      vaabbs[0].extents = OpenRAVE::Vector(cube_extent, cube_extent, cube_extent); /* extents = half side lengths */
-      cube->InitFromBoxes(vaabbs, 1);
-   }
-   
-   /* add the cube */
-   this->e->AddKinBody(cube);
-   
-   /* get the pose_world_gsdf = pose_world_kinbody * pose_kinbody_gsdf */
-   {
-      OpenRAVE::Transform t = kinbody->GetTransform();
-      pose_world_gsdf[0] = t.trans.x;
-      pose_world_gsdf[1] = t.trans.y;
-      pose_world_gsdf[2] = t.trans.z;
-      pose_world_gsdf[3] = t.rot.y;
-      pose_world_gsdf[4] = t.rot.z;
-      pose_world_gsdf[5] = t.rot.w;
-      pose_world_gsdf[6] = t.rot.x;
-      cd_kin_pose_compose(pose_world_gsdf, sdf_new.pose, pose_world_gsdf);
-   }
-
-   int collisions = 0;
-   
-   /* go through the grid, testing for collision as we go;
-    * collisions are HUGE_VAL, free are 1.0 */
-   printf("computing occupancy grid ...\n");
-   for (idx=0; idx<g_obs->ncells; idx++)
-   {
-      OpenRAVE::Transform t;
-      
-      if (idx % 100000 == 0)
-         printf("idx=%d ...\n", (int)idx);
-      
-      /* set cube location */
-      t.identity();
-      cd_kin_pose_identity(pose_cube);
-      cd_grid_center_index(g_obs, idx, pose_cube);
-      cd_kin_pose_compose(pose_world_gsdf, pose_cube, pose_cube);
-      t.trans.x = pose_cube[0];
-      t.trans.y = pose_cube[1];
-      t.trans.z = pose_cube[2];
-      t.rot.y = pose_cube[3];
-      t.rot.z = pose_cube[4];
-      t.rot.w = pose_cube[5];
-      t.rot.x = pose_cube[6];
-      cube->SetTransform(t);
-      
-      /* do collision check */
-      if (this->e->CheckCollision(cube))
+      /* compute aabb when object is at world origin */
       {
-         *(double *)cd_grid_get_index(g_obs, idx) = HUGE_VAL;
-         collisions++;
+         OpenRAVE::KinBody::KinBodyStateSaver statesaver(kinbody);
+         kinbody->SetTransform(OpenRAVE::Transform());
+         aabb = kinbody->ComputeAABB();
+      }
+      printf("    pos: %f %f %f\n", aabb.pos[0], aabb.pos[1], aabb.pos[2]);
+      printf("extents: %f %f %f\n", aabb.extents[0], aabb.extents[1], aabb.extents[2]);
+
+      /* calculate dimension sizes (number of cells) */
+      for (i=0; i<3; i++)
+      {
+         /* 0.15m padding (was 0.3m) on each side
+          * (this is the radius of the biggest herb2 spehere)
+          * (note: extents are half the side lengths!) */
+         gsdf_sizearray[i] = (int) ceil((aabb.extents[i]+1.0) / cube_extent);
+         printf("gsdf_sizearray[%d]: %d\n", i, gsdf_sizearray[i]);
+      }
+      
+      /* Create a new grid located around the current kinbody;
+       * per-dimension sizes set above */
+      temp = 1.0; /* free space */
+      err = cd_grid_create_sizearray(&g_obs, &temp, sizeof(double), 3, gsdf_sizearray);
+      if (err) throw OpenRAVE::openrave_exception("Not enough memory for distance field!");
+      
+      /* set side lengths */
+      for (i=0; i<3; i++)
+         g_obs->lengths[i] = gsdf_sizearray[i] * 2.0 * cube_extent;
+      cd_mat_vec_print("g_obs->lengths: ", g_obs->lengths, 3);
+      
+      /* set pose of grid w.r.t. kinbody frame */
+      cd_kin_pose_identity(sdf_new.pose);
+      for (i=0; i<3; i++)
+         sdf_new.pose[i] = aabb.pos[i] - 0.5 * g_obs->lengths[i];
+      cd_mat_vec_print("pose_gsdf: ", sdf_new.pose, 7);
+      
+      /* create the cube */
+      cube = OpenRAVE::RaveCreateKinBody(this->e);
+      cube->SetName("cube");
+      
+      /* set its dimensions */
+      {
+         std::vector<OpenRAVE::AABB> vaabbs(1);
+         vaabbs[0].extents = OpenRAVE::Vector(cube_extent, cube_extent, cube_extent); /* extents = half side lengths */
+         cube->InitFromBoxes(vaabbs, 1);
+      }
+      
+      /* add the cube */
+      this->e->AddKinBody(cube);
+      
+      /* get the pose_world_gsdf = pose_world_kinbody * pose_kinbody_gsdf */
+      {
+         OpenRAVE::Transform t = kinbody->GetTransform();
+         pose_world_gsdf[0] = t.trans.x;
+         pose_world_gsdf[1] = t.trans.y;
+         pose_world_gsdf[2] = t.trans.z;
+         pose_world_gsdf[3] = t.rot.y;
+         pose_world_gsdf[4] = t.rot.z;
+         pose_world_gsdf[5] = t.rot.w;
+         pose_world_gsdf[6] = t.rot.x;
+         cd_kin_pose_compose(pose_world_gsdf, sdf_new.pose, pose_world_gsdf);
+      }
+
+      int collisions = 0;
+      
+      /* go through the grid, testing for collision as we go;
+       * collisions are HUGE_VAL, free are 1.0 */
+      printf("computing occupancy grid ...\n");
+      for (idx=0; idx<g_obs->ncells; idx++)
+      {
+         OpenRAVE::Transform t;
+         
+         if (idx % 100000 == 0)
+            printf("idx=%d ...\n", (int)idx);
+         
+         /* set cube location */
+         t.identity();
+         cd_kin_pose_identity(pose_cube);
+         cd_grid_center_index(g_obs, idx, pose_cube);
+         cd_kin_pose_compose(pose_world_gsdf, pose_cube, pose_cube);
+         t.trans.x = pose_cube[0];
+         t.trans.y = pose_cube[1];
+         t.trans.z = pose_cube[2];
+         t.rot.y = pose_cube[3];
+         t.rot.z = pose_cube[4];
+         t.rot.w = pose_cube[5];
+         t.rot.x = pose_cube[6];
+         cube->SetTransform(t);
+         
+         /* do collision check */
+         if (this->e->CheckCollision(cube))
+         {
+            *(double *)cd_grid_get_index(g_obs, idx) = HUGE_VAL;
+            collisions++;
+         }
+      }
+
+      printf("found %d/%d collisions!\n", collisions, (int)(g_obs->ncells));
+      
+      /* remove cube */
+      this->e->Remove(cube);
+      
+      /* we assume the point at the very top is free;
+       * do flood fill to set all cells that are 1.0 -> 0.0 */
+      printf("performing flood fill ...\n");
+      {
+         double point[3] = {2.0, 2.0, 3.999}; /* center, at the top */
+         cd_grid_lookup_index(g_obs, point, &idx);
+      }
+      grid_flood_fill(g_obs, idx, (int (*)(void *, void *))replace_1_to_0, 0);
+      
+      /* change any remaining 1.0 cells to HUGE_VAL (assumed inside of obstacles) */
+      for (idx=0; idx<g_obs->ncells; idx++)
+         if (*(double *)cd_grid_get_index(g_obs, idx) == 1.0)
+            *(double *)cd_grid_get_index(g_obs, idx) = HUGE_VAL;
+      
+      /* compute the signed distance field (in the module instance) */
+      printf("computing signed distance field ...\n");
+      cd_grid_double_bin_sdf(&sdf_new.grid, g_obs);
+      cd_grid_destroy(g_obs);
+      
+      /* if we were passed a cache_filename, save what we just computed! */
+      if (cache_filename[0])
+      {
+         FILE * fp;
+         printf("saving sdf to file %s ...\n", cache_filename);
+         fp = fopen(cache_filename, "wb");
+         /* write struct sdf */
+         fwrite(sdf_new.kinbody_name, sizeof(sdf_new.kinbody_name), 1, fp);
+         fwrite(sdf_new.pose, sizeof(sdf_new.pose), 1, fp);
+         /* write grid */
+         fwrite(&sdf_new.grid->n, sizeof(sdf_new.grid->n), 1, fp);
+         fwrite(sdf_new.grid->sizes, sizeof(sdf_new.grid->sizes[0]), sdf_new.grid->n, fp);
+         fwrite(&sdf_new.grid->ncells, sizeof(sdf_new.grid->ncells), 1, fp);
+         fwrite(&sdf_new.grid->cell_size, sizeof(sdf_new.grid->cell_size), 1, fp);
+         fwrite(sdf_new.grid->data, sdf_new.grid->cell_size, sdf_new.grid->ncells, fp);
+         fwrite(sdf_new.grid->lengths, sizeof(sdf_new.grid->lengths[0]), sdf_new.grid->n, fp);
+         fclose(fp);
       }
    }
-
-   printf("found %d/%d collisions!\n", collisions, (int)(g_obs->ncells));
-   
-   /* remove cube */
-   this->e->Remove(cube);
-   
-   /* we assume the point at the very top is free;
-    * do flood fill to set all cells that are 1.0 -> 0.0 */
-   printf("performing flood fill ...\n");
-   {
-      double point[3] = {2.0, 2.0, 3.999}; /* center, at the top */
-      cd_grid_lookup_index(g_obs, point, &idx);
-   }
-   grid_flood_fill(g_obs, idx, (int (*)(void *, void *))replace_1_to_0, 0);
-   
-   /* change any remaining 1.0 cells to HUGE_VAL (assumed inside of obstacles) */
-   for (idx=0; idx<g_obs->ncells; idx++)
-      if (*(double *)cd_grid_get_index(g_obs, idx) == 1.0)
-         *(double *)cd_grid_get_index(g_obs, idx) = HUGE_VAL;
-   
-   /* compute the signed distance field (in the module instance) */
-   printf("computing signed distance field ...\n");
-   cd_grid_double_bin_sdf(&sdf_new.grid, g_obs);
-   cd_grid_destroy(g_obs);
    
    /* allocate a new sdf struct, and copy the new one there! */
    this->sdfs = (struct sdf *) realloc(this->sdfs, (this->n_sdfs+1)*sizeof(struct sdf));
@@ -445,8 +495,9 @@ struct cost_helper
    double obs_factor;
    double obs_factor_self;
    
-   /* ugh */
-   OpenRAVE::EnvironmentBasePtr e;
+   clock_t ticks_fk;
+   clock_t ticks_jacobian;
+   clock_t ticks_selfcol;
 };
 
 int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double * costp, double * c_grad)
@@ -470,11 +521,16 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
    int sdfi_best;
    double sdfi_best_dist;
    int sai;
+   clock_t tic;
+   clock_t toc;
    
    /* put the robot in the config */
    std::vector<OpenRAVE::dReal> vec(c_point, c_point+h->n);
+   tic = clock();
    h->r->SetActiveDOFValues(vec);
-   
+   toc = clock();
+   h->ticks_fk += (toc - tic);
+
    /* start with a zero cost and config-space gradient */
    cost = 0.0;
    if (c_grad) cd_mat_set_zero(c_grad, h->n, 1);
@@ -491,7 +547,10 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
       OpenRAVE::Vector v = t * OpenRAVE::Vector(s->pos); /* copies 3 values */
 
       /* compute the manipulator jacobian at this point, at this link */
+      tic = clock();
       h->r->CalculateJacobian(s->linkindex, v, orjacobian);
+      toc = clock();
+      h->ticks_jacobian += (toc - tic);
       /* copy the active columns of orjacobian into our J */
       for (i=0; i<3; i++)
          for (j=0; j<h->n; j++)
@@ -577,6 +636,7 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
       }
 
       /* consider effects from all other spheres (i.e. self collision) */
+      tic = clock();
       for (s2=h->spheres_all; s2; s2=s2->next)
       {
          /* skip spheres on the same link (their Js would be identical anyways) */
@@ -637,6 +697,8 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
                -1.0, h->J2,h->n, x_grad,1, 1.0, c_grad,1);
          }
       }
+      toc = clock();
+      h->ticks_selfcol += (toc - tic);
       
       if (costp)
       {
@@ -899,7 +961,9 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    h.epsilon_self = epsilon_self;
    h.obs_factor = obs_factor;
    h.obs_factor_self = obs_factor_self;
-   h.e = this->e;
+   h.ticks_jacobian = 0;
+   h.ticks_fk = 0;
+   h.ticks_selfcol = 0;
    
    /* compute the rooted sdfs ... */
    h.n_rsdfs = this->n_sdfs;
@@ -986,7 +1050,6 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          cd_chomp_iterate(c, 1, &cost_total, &cost_obs, &cost_smooth);
          printf("iter:%2d cost_total:%f cost_obs:%f cost_smooth:%f\n", iter, cost_total, cost_obs, cost_smooth);
       }
-
       
       /* handle joint limits */
       while (1)
@@ -1039,7 +1102,15 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    
    printf("done!\n");
    
-   printf("Clock time for %d iterations: %f\n", iter, (1.0*clock_end/CLOCKS_PER_SEC)-(1.0*clock_start/CLOCKS_PER_SEC));
+   printf("Clock time for %d iterations: %.3f\n", iter, (1.0*clock_end/CLOCKS_PER_SEC)-(1.0*clock_start/CLOCKS_PER_SEC));
+   printf("Time breakdown:\n");
+   printf("  ticks_vels       %.3f\n", 1.0*c->ticks_vels/CLOCKS_PER_SEC);
+   printf("  ticks_callbacks  %.3f\n", 1.0*c->ticks_callbacks/CLOCKS_PER_SEC);
+   printf("    ticks_fk       %.3f\n", 1.0*h.ticks_fk/CLOCKS_PER_SEC);
+   printf("    ticks_jacobian   %.3f\n", 1.0*h.ticks_jacobian/CLOCKS_PER_SEC);
+   printf("    ticks_selfcol    %.3f\n", 1.0*h.ticks_selfcol/CLOCKS_PER_SEC);
+   printf("  ticks_smoothgrad %.3f\n", 1.0*c->ticks_smoothgrad/CLOCKS_PER_SEC);
+   printf("  ticks_smoothcost %.3f\n", 1.0*c->ticks_smoothcost/CLOCKS_PER_SEC);
    
    /* create an openrave trajectory from the result, and send to sout */
    OpenRAVE::TrajectoryBasePtr t = OpenRAVE::RaveCreateTrajectory(this->e);
