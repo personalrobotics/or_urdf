@@ -7,6 +7,7 @@ extern "C" {
 #include <libcd/grid.h>
 #include <libcd/kin.h>
 #include <libcd/mat.h>
+#include <libcd/os.h>
 #include <libcd/util.h>
 }
 
@@ -15,6 +16,16 @@ extern "C" {
 
 #include "orcdchomp_rdata.h"
 #include "orcdchomp_mod.h"
+
+#define DEBUG_TIMING
+
+#ifdef DEBUG_TIMING
+#  define TIC() { struct timespec tic; struct timespec toc; clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &tic);
+#  define TOC(tsptr) clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &toc); CD_OS_TIMESPEC_SUB(&toc, &tic); CD_OS_TIMESPEC_ADD(tsptr, &toc); }
+#else
+#  define TIC()
+#  define TOC(tsptr)
+#endif
 
 
 namespace orcdchomp
@@ -495,17 +506,80 @@ struct cost_helper
    double obs_factor;
    double obs_factor_self;
    
-   clock_t ticks_fk;
-   clock_t ticks_jacobian;
-   clock_t ticks_selfcol;
+   /* each of these are indexed by [trajpoints][sphereid][xyz]
+    * and filled by sphere_cost_pre */
+   double dt;
+   double * sphere_poss; 
+   double * sphere_vels;
+   double * sphere_accs;
+   double * sphere_jacs; /* [trajpoints][sphereid][3xn] */
+   
+   struct timespec ticks_fk;
+   struct timespec ticks_jacobians;
+   struct timespec ticks_selfcol;
 };
 
-int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double * costp, double * c_grad)
+int sphere_cost_pre(struct cost_helper * h, int m_ext, double ** T_ext_points)
 {
+   int ti;
    int i;
    int j;
+   int sai;
+   struct orcdchomp::sphere * s;
+   boost::multi_array< OpenRAVE::dReal, 2 > orjacobian;
+   
+   /* compute positions of all spheres */
+   for (ti=0; ti<m_ext; ti++)
+   {
+      /* put the robot in the config */
+      std::vector<OpenRAVE::dReal> vec(T_ext_points[ti], T_ext_points[ti]+h->n);
+      TIC()
+      h->r->SetActiveDOFValues(vec);
+      TOC(&h->ticks_fk)
+      
+      for (sai=0; sai<h->n_spheres_active; sai++)
+      {
+         s = h->spheres_active[sai];
+         OpenRAVE::Transform t = h->r->GetLink(s->linkname)->GetTransform();
+         OpenRAVE::Vector v = t * OpenRAVE::Vector(s->pos); /* copies 3 values */
+         /* save sphere positions */
+         h->sphere_poss[ti*(h->n_spheres_active*3) + sai*3 + 0] = v.x;
+         h->sphere_poss[ti*(h->n_spheres_active*3) + sai*3 + 1] = v.y;
+         h->sphere_poss[ti*(h->n_spheres_active*3) + sai*3 + 2] = v.z;
+         /* compute linear jacobians */
+         TIC()
+         h->r->CalculateJacobian(s->linkindex, v, orjacobian);
+         TOC(&h->ticks_jacobians)
+         if (ti > 0 && ti < m_ext-1)
+         {
+            /* copy the active columns of orjacobian into our J */
+            for (i=0; i<3; i++)
+               for (j=0; j<h->n; j++)
+                  h->sphere_jacs[(ti-1)*h->n_spheres_active*3*h->n + sai*3*h->n + i*h->n+j] = orjacobian[i][h->adofindices[j]];
+         }
+      }
+   }
+   
+   /* compute velocities for all internal points */
+   cd_mat_memcpy(h->sphere_vels, h->sphere_poss + 2*h->n_spheres_active*3, m_ext-2, h->n_spheres_active*3);
+   cd_mat_sub(h->sphere_vels, h->sphere_poss, m_ext-2, h->n_spheres_active*3);
+   cd_mat_scale(h->sphere_vels, m_ext-2, h->n_spheres_active*3, 1.0/h->dt);
+   
+   /* compute accelerations for all internal points */
+   cd_mat_memcpy(h->sphere_accs, h->sphere_poss + h->n_spheres_active*3, m_ext-2, h->n_spheres_active*3);
+   cd_mat_scale(h->sphere_accs, m_ext-2, h->n_spheres_active*3, -2.0);
+   cd_mat_add(h->sphere_accs, h->sphere_poss, m_ext-2, h->n_spheres_active*3);
+   cd_mat_add(h->sphere_accs, h->sphere_poss + 2*h->n_spheres_active*3, m_ext-2, h->n_spheres_active*3);
+   cd_mat_scale(h->sphere_accs, m_ext-2, h->n_spheres_active*3, 1.0/(h->dt * h->dt));
+   
+   return 0;
+}
+
+int sphere_cost(struct cost_helper * h, int ti, double * c_point, double * c_vel, double * costp, double * c_grad)
+{
+   int i;
    int err;
-   double x_vel[3];
+   double * x_vel;
    double x_vel_norm;
    double g_point[3];
    double dist;
@@ -514,23 +588,15 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
    double g_grad[3];
    double x_grad[3];
    double proj;
-   double x_vel2;
-   boost::multi_array< OpenRAVE::dReal, 2 > orjacobian;
+   double x_curv[3];
    struct orcdchomp::sphere * s;
    struct orcdchomp::sphere * s2;
    int sdfi_best;
    double sdfi_best_dist;
    int sai;
-   clock_t tic;
-   clock_t toc;
+   int sai2;
+   double v_from_other[3];
    
-   /* put the robot in the config */
-   std::vector<OpenRAVE::dReal> vec(c_point, c_point+h->n);
-   tic = clock();
-   h->r->SetActiveDOFValues(vec);
-   toc = clock();
-   h->ticks_fk += (toc - tic);
-
    /* start with a zero cost and config-space gradient */
    cost = 0.0;
    if (c_grad) cd_mat_set_zero(c_grad, h->n, 1);
@@ -541,23 +607,9 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
       s = h->spheres_active[sai];
       
       cost_sphere = 0.0;
-      
-      /* get sphere center */
-      OpenRAVE::Transform t = h->r->GetLink(s->linkname)->GetTransform();
-      OpenRAVE::Vector v = t * OpenRAVE::Vector(s->pos); /* copies 3 values */
 
-      /* compute the manipulator jacobian at this point, at this link */
-      tic = clock();
-      h->r->CalculateJacobian(s->linkindex, v, orjacobian);
-      toc = clock();
-      h->ticks_jacobian += (toc - tic);
-      /* copy the active columns of orjacobian into our J */
-      for (i=0; i<3; i++)
-         for (j=0; j<h->n; j++)
-            h->J[i*h->n+j] = orjacobian[i][h->adofindices[j]];
       /* compute the current workspace velocity of the sphere */
-      cblas_dgemv(CblasRowMajor, CblasNoTrans, 3, h->n,
-         1.0, h->J,h->n, c_vel,1, 0.0, x_vel,1);
+      x_vel = h->sphere_vels + ti*(h->n_spheres_active*3) + sai*3;
       x_vel_norm = cblas_dnrm2(3, x_vel, 1);
       
       /* compute which distance field is closest to an obstacle */
@@ -566,10 +618,9 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
       for (i=0; i<h->n_rsdfs; i++)
       {
          /* transform sphere center into grid frame */
-         g_point[0] = v.x;
-         g_point[1] = v.y;
-         g_point[2] = v.z;
-         cd_kin_pose_compos(h->rsdfs[i].pose_gsdf_world, g_point, g_point);
+         cd_kin_pose_compos(h->rsdfs[i].pose_gsdf_world,
+            h->sphere_poss + (ti+1)*(h->n_spheres_active*3) + sai*3,
+            g_point);
          /* get sdf value (from interp) */
          err = cd_grid_double_interp(h->rsdfs[i].grid, g_point, &dist);
          if (err)
@@ -588,23 +639,19 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
       }
 
       /* transform sphere center into grid frame */
-      g_point[0] = v.x;
-      g_point[1] = v.y;
-      g_point[2] = v.z;
-      cd_kin_pose_compos(h->rsdfs[sdfi_best].pose_gsdf_world, g_point, g_point);
+      cd_kin_pose_compos(h->rsdfs[sdfi_best].pose_gsdf_world,
+         h->sphere_poss + (ti+1)*(h->n_spheres_active*3) + sai*3,
+         g_point);
       /* get sdf value (from interp) */
       cd_grid_double_interp(h->rsdfs[sdfi_best].grid, g_point, &dist);
       /* subtract radius to get distance of closest sphere point to closest obstacle */
       dist -= s->radius;
       
-      if (costp)
-      {
-         /* convert to a cost */
-         if (dist < 0.0)
-            cost_sphere += h->obs_factor * (0.5 * h->epsilon - dist);
-         else if (dist < h->epsilon)
-            cost_sphere += h->obs_factor * (0.5/h->epsilon) * (dist-h->epsilon) * (dist-h->epsilon);
-      }
+      /* convert to a cost, scaled by sphere velocity */
+      if (dist < 0.0)
+         cost_sphere += x_vel_norm * h->obs_factor * (0.5 * h->epsilon - dist);
+      else if (dist < h->epsilon)
+         cost_sphere += x_vel_norm * h->obs_factor * (0.5/h->epsilon) * (dist-h->epsilon) * (dist-h->epsilon);
       
       if (c_grad)
       {
@@ -623,51 +670,64 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
          cd_mat_scale(x_grad, 3, 1, h->obs_factor);
          
          /* subtract from x_grad vector projection onto x_vel */
-         x_vel2 = cblas_ddot(3, x_vel,1, x_vel,1);
-         if (x_vel2 > 0.000001)
+         if (x_vel_norm > 0.000001)
          {
-            proj = cblas_ddot(3, x_grad,1, x_vel,1) / x_vel2;
+            proj = cblas_ddot(3, x_grad,1, x_vel,1) / (x_vel_norm * x_vel_norm);
             cblas_daxpy(3, -proj, x_vel,1, x_grad,1);
          }
          
-         /* multiply into c_grad through JT */
+         /* compute curvature vector */
+         cd_mat_memcpy(x_curv, h->sphere_accs + ti*(h->n_spheres_active*3) + sai*3, 3, 1);
+         if (x_vel_norm > 0.000001)
+         {
+            proj = cblas_ddot(3, x_curv,1, x_vel,1) / (x_vel_norm * x_vel_norm);
+            cblas_daxpy(3, -proj, x_vel,1, x_curv,1);
+         }
+         cd_mat_scale(x_curv, 3, 1, 1.0 / (x_vel_norm * x_vel_norm));
+         /* add that in to x_grad */
+         cblas_daxpy(3, -cost_sphere, x_curv,1, x_grad,1);
+         
+         /* multiply into c_grad through JT, scaled by sphere velocity */
          cblas_dgemv(CblasRowMajor, CblasTrans, 3, h->n,
-            1.0, h->J,h->n, x_grad,1, 1.0, c_grad,1);
+            x_vel_norm, h->sphere_jacs + ti*h->n_spheres_active*3*h->n + sai*3*h->n,h->n, x_grad,1, 1.0, c_grad,1);
       }
 
       /* consider effects from all other spheres (i.e. self collision) */
-      tic = clock();
-      for (s2=h->spheres_all; s2; s2=s2->next)
+      TIC()
+      for (sai2=0; sai2<h->n_spheres_active; sai2++)
       {
+         s2 = h->spheres_active[sai2];
+         
          /* skip spheres on the same link (their Js would be identical anyways) */
          if (s->linkindex == s2->linkindex) continue;
          
          /* skip spheres far enough away from us */
-         dist = s->radius + s2->radius + h->epsilon_self;
-         OpenRAVE::Vector v_from_other = v - h->r->GetLink(s2->linkname)->GetTransform() * OpenRAVE::Vector(s2->pos);
-         if (v_from_other.lengthsqr3() > dist*dist) continue;
-         
-         if (costp)
-         {
-            /* compute the cost */
-            dist = sqrt(v_from_other.lengthsqr3()) - s->radius - s2->radius;
-            if (dist < 0.0)
-               cost_sphere += h->obs_factor_self * (0.5 * h->epsilon_self - dist);
-            else
-               cost_sphere += h->obs_factor_self * (0.5/h->epsilon_self) * (dist-h->epsilon_self) * (dist-h->epsilon_self);
-         }
+         cd_mat_memcpy(v_from_other, h->sphere_poss + (ti+1)*(h->n_spheres_active*3) + sai*3, 3, 1);
+         cd_mat_sub(v_from_other, h->sphere_poss + (ti+1)*(h->n_spheres_active*3) + sai2*3, 3, 1);
+         dist = cblas_dnrm2(3, v_from_other,1);
+         if (dist > s->radius + s2->radius + h->epsilon_self) continue;
          
          if (c_grad)
          {
             /* make unit vector (g_grad) away from other sphere */
-            dist = sqrt(v_from_other.lengthsqr3());
             g_grad[0] = v_from_other[0] / dist;
             g_grad[1] = v_from_other[1] / dist;
             g_grad[2] = v_from_other[2] / dist;
-            
-            /* compute distance in collision */
-            dist -= s->radius - s2->radius;
-            
+         }
+         
+         dist -= s->radius + s2->radius;
+         
+         if (costp)
+         {
+            /* compute the cost */
+            if (dist < 0.0)
+               cost_sphere += x_vel_norm * h->obs_factor_self * (0.5 * h->epsilon_self - dist);
+            else
+               cost_sphere += x_vel_norm * h->obs_factor_self * (0.5/h->epsilon_self) * (dist-h->epsilon_self) * (dist-h->epsilon_self);
+         }
+         
+         if (c_grad)
+         {
             /* convert sdf g_grad to x_grad (w.r.t. cost) according to dist */
             cd_mat_memcpy(x_grad, g_grad, 3, 1);
             if (dist < 0.0)
@@ -677,19 +737,15 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
             cd_mat_scale(x_grad, 3, 1, h->obs_factor_self);
             
             /* subtract from x_grad vector projection onto x_vel */
-            x_vel2 = cblas_ddot(3, x_vel,1, x_vel,1);
-            if (x_vel2 > 0.000001)
+            if (x_vel_norm > 0.000001)
             {
-               proj = cblas_ddot(3, x_grad,1, x_vel,1) / x_vel2;
+               proj = cblas_ddot(3, x_grad,1, x_vel,1) / (x_vel_norm * x_vel_norm);
                cblas_daxpy(3, -proj, x_vel,1, x_grad,1);
             }
             
             /* J2 = J - jacobian of other sphere*/
-            cd_mat_memcpy(h->J2, h->J, 3, h->n);
-            h->r->CalculateJacobian(s2->linkindex, v, orjacobian);
-            for (i=0; i<3; i++)
-               for (j=0; j<h->n; j++)
-                  h->J2[i*h->n+j] -= orjacobian[i][h->adofindices[j]];
+            cd_mat_memcpy(h->J2, h->sphere_jacs + ti*h->n_spheres_active*3*h->n + sai*3*h->n, 3, h->n);
+            cd_mat_sub(h->J2, h->sphere_jacs + ti*h->n_spheres_active*3*h->n + sai2*3*h->n, 3, h->n);
             
             /* multiply into c_grad through JT */
             /* I HAVE NO IDEA WHY THERES A -1 HERE! */
@@ -697,15 +753,9 @@ int sphere_cost(struct cost_helper * h, double * c_point, double * c_vel, double
                -1.0, h->J2,h->n, x_grad,1, 1.0, c_grad,1);
          }
       }
-      toc = clock();
-      h->ticks_selfcol += (toc - tic);
+      TOC(&h->ticks_selfcol)
       
-      if (costp)
-      {
-         /* scale by sphere velocity */
-         cost_sphere *= x_vel_norm;
-         cost += cost_sphere;
-      }
+      cost += cost_sphere;
    }
    
    if (costp) *costp = cost;
@@ -754,8 +804,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    double cost_total;
    double cost_obs;
    double cost_smooth;
-   clock_t clock_start;
-   clock_t clock_end;
+   struct timespec ticks_iterations;
    
    /* lock environment */
    lockenv = OpenRAVE::EnvironmentMutex::scoped_lock(this->e->GetMutex());
@@ -961,9 +1010,13 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    h.epsilon_self = epsilon_self;
    h.obs_factor = obs_factor;
    h.obs_factor_self = obs_factor_self;
-   h.ticks_jacobian = 0;
-   h.ticks_fk = 0;
-   h.ticks_selfcol = 0;
+   cd_os_timespec_set_zero(&h.ticks_jacobians);
+   cd_os_timespec_set_zero(&h.ticks_fk);
+   cd_os_timespec_set_zero(&h.ticks_selfcol);
+   h.sphere_poss = (double *) malloc((n_intpoints+2)*n_spheres_active*3*sizeof(double));
+   h.sphere_vels = (double *) malloc((n_intpoints)*n_spheres_active*3*sizeof(double));
+   h.sphere_accs = (double *) malloc((n_intpoints)*n_spheres_active*3*sizeof(double));
+   h.sphere_jacs = (double *) malloc((n_intpoints)*n_spheres_active*(3*n_dof)*sizeof(double));
    
    /* compute the rooted sdfs ... */
    h.n_rsdfs = this->n_sdfs;
@@ -985,8 +1038,9 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    
    /* ok, ready to go! create a chomp solver */
    err = cd_chomp_create(&c, n_dof, n_intpoints, 1, &h,
-      (int (*)(void *, double *, double *, double *, double *))sphere_cost);
-   if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofgoal); free(adofindices); free(spheres_active); throw OpenRAVE::openrave_exception("Error creating chomp instance."); }
+      (int (*)(void *, int, double **))sphere_cost_pre,
+      (int (*)(void *, int, double *, double *, double *, double *))sphere_cost);
+   if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(h.sphere_poss); free(h.sphere_vels); free(h.sphere_accs); free(h.sphere_jacs); free(adofgoal); free(adofindices); free(spheres_active); throw OpenRAVE::openrave_exception("Error creating chomp instance."); }
    /*c->lambda = 1000000.0;*/
    c->lambda = lambda;
    /* this parameter affects how fast things settle;
@@ -1029,10 +1083,13 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    
    /* Initialize CHOMP */
    err = cd_chomp_init(c);
-   if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofindices); cd_chomp_destroy(c); free(spheres_active); throw OpenRAVE::openrave_exception("Error initializing chomp instance."); }
+   if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(h.sphere_poss); free(h.sphere_vels); free(h.sphere_accs); free(h.sphere_jacs); free(adofindices); cd_chomp_destroy(c); free(spheres_active); throw OpenRAVE::openrave_exception("Error initializing chomp instance."); }
+   
+   h.dt = c->dt;
    
    RAVELOG_INFO("iterating CHOMP ...\n");
-   clock_start = clock();
+   cd_os_timespec_set_zero(&ticks_iterations);
+   TIC()
    for (iter=0; iter<n_iter; iter++)
    {
 #if 0
@@ -1095,22 +1152,23 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
                      GjlimitAinv,1, c->T,1);
       }
    }
-   clock_end = clock();
+   TOC(&ticks_iterations)
    
    cd_chomp_iterate(c, 0, &cost_total, &cost_obs, &cost_smooth);
    printf("iter:%2d cost_total:%f cost_obs:%f cost_smooth:%f [FINAL]\n", iter, cost_total, cost_obs, cost_smooth);
    
    printf("done!\n");
    
-   printf("Clock time for %d iterations: %.3f\n", iter, (1.0*clock_end/CLOCKS_PER_SEC)-(1.0*clock_start/CLOCKS_PER_SEC));
+   printf("Clock time for %d iterations: %.8f\n", iter, cd_os_timespec_double(&ticks_iterations));
    printf("Time breakdown:\n");
-   printf("  ticks_vels       %.3f\n", 1.0*c->ticks_vels/CLOCKS_PER_SEC);
-   printf("  ticks_callbacks  %.3f\n", 1.0*c->ticks_callbacks/CLOCKS_PER_SEC);
-   printf("    ticks_fk       %.3f\n", 1.0*h.ticks_fk/CLOCKS_PER_SEC);
-   printf("    ticks_jacobian   %.3f\n", 1.0*h.ticks_jacobian/CLOCKS_PER_SEC);
-   printf("    ticks_selfcol    %.3f\n", 1.0*h.ticks_selfcol/CLOCKS_PER_SEC);
-   printf("  ticks_smoothgrad %.3f\n", 1.0*c->ticks_smoothgrad/CLOCKS_PER_SEC);
-   printf("  ticks_smoothcost %.3f\n", 1.0*c->ticks_smoothcost/CLOCKS_PER_SEC);
+   printf("  ticks_vels         %.8f\n", cd_os_timespec_double(&c->ticks_vels));
+   printf("  ticks_callback_pre %.8f\n", cd_os_timespec_double(&c->ticks_callback_pre));
+   printf("  ticks_callbacks    %.8f\n", cd_os_timespec_double(&c->ticks_callbacks));
+   printf("    ticks_fk           %.8f\n", cd_os_timespec_double(&h.ticks_fk));
+   printf("    ticks_jacobians    %.8f\n", cd_os_timespec_double(&h.ticks_jacobians));
+   printf("    ticks_selfcol      %.8f\n", cd_os_timespec_double(&h.ticks_selfcol));
+   printf("  ticks_smoothgrad   %.8f\n", cd_os_timespec_double(&c->ticks_smoothgrad));
+   printf("  ticks_smoothcost   %.8f\n", cd_os_timespec_double(&c->ticks_smoothcost));
    
    /* create an openrave trajectory from the result, and send to sout */
    OpenRAVE::TrajectoryBasePtr t = OpenRAVE::RaveCreateTrajectory(this->e);
@@ -1142,7 +1200,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          {
             RAVELOG_ERROR("Collision: %s\n", report->__str__().c_str());
             if (!no_collision_exception)
-               { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(adofindices); cd_chomp_destroy(c); free(spheres_active); throw OpenRAVE::openrave_exception("Resulting trajectory is in collision!"); }
+               { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(h.sphere_poss); free(h.sphere_vels); free(h.sphere_accs); free(h.sphere_jacs); free(adofindices); cd_chomp_destroy(c); free(spheres_active); throw OpenRAVE::openrave_exception("Resulting trajectory is in collision!"); }
          }
       }
    }
@@ -1156,6 +1214,10 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    free(h.rsdfs);
    free(h.J);
    free(h.J2);
+   free(h.sphere_poss);
+   free(h.sphere_vels);
+   free(h.sphere_accs);
+   free(h.sphere_jacs);
    free(adofindices);
    free(spheres_active);
 
