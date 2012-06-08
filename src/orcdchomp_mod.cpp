@@ -20,8 +20,8 @@ extern "C" {
 #define DEBUG_TIMING
 
 #ifdef DEBUG_TIMING
-#  define TIC() { struct timespec tic; struct timespec toc; clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &tic);
-#  define TOC(tsptr) clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &toc); CD_OS_TIMESPEC_SUB(&toc, &tic); CD_OS_TIMESPEC_ADD(tsptr, &toc); }
+#  define TIC() { struct timespec tic; struct timespec toc; clock_gettime(CLOCK_THREAD_CPUTIME_ID, &tic);
+#  define TOC(tsptr) clock_gettime(CLOCK_THREAD_CPUTIME_ID, &toc); CD_OS_TIMESPEC_SUB(&toc, &tic); CD_OS_TIMESPEC_ADD(tsptr, &toc); }
 #else
 #  define TIC()
 #  define TOC(tsptr)
@@ -232,6 +232,7 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
    OpenRAVE::KinBodyPtr kinbody;
    /* parameters */
    double cube_extent;
+   double aabb_padding;
    char cache_filename[1024];
    /* other */
    double temp;
@@ -248,6 +249,7 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
    lockenv = OpenRAVE::EnvironmentMutex::scoped_lock(this->e->GetMutex());
    
    cube_extent = 0.02;
+   aabb_padding = 0.2;
    cache_filename[0] = 0;
    
    /* parse arguments into kinbody */
@@ -268,6 +270,12 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
             kinbody = this->e->GetKinBody(buf);
             if (!kinbody.get()) { free(in); throw OpenRAVE::openrave_exception("Could not find kinbody with that name!"); }
             RAVELOG_INFO("Using kinbody |%s|.\n", kinbody->GetName().c_str());
+            continue;
+         }
+         if (strp_skipprefix(&cur, (char *)"aabb_padding"))
+         {
+            sscanf(cur, " %lf%n", &aabb_padding, &len); cur += len;
+            RAVELOG_INFO("Using aabb_padding |%f|.\n", aabb_padding);
             continue;
          }
          if (strp_skipprefix(&cur, (char *)"cube_extent"))
@@ -346,7 +354,7 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
          /* 0.15m padding (was 0.3m) on each side
           * (this is the radius of the biggest herb2 spehere)
           * (note: extents are half the side lengths!) */
-         gsdf_sizearray[i] = (int) ceil((aabb.extents[i]+1.0) / cube_extent);
+         gsdf_sizearray[i] = (int) ceil((aabb.extents[i]+aabb_padding) / cube_extent);
          printf("gsdf_sizearray[%d]: %d\n", i, gsdf_sizearray[i]);
       }
       
@@ -404,7 +412,7 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
          OpenRAVE::Transform t;
          
          if (idx % 100000 == 0)
-            printf("idx=%d ...\n", (int)idx);
+            printf("idx=%d (%5.1f%%)...\n", (int)idx, (100.0*((double)idx)/((double)g_obs->ncells)));
          
          /* set cube location */
          t.identity();
@@ -787,8 +795,10 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    double obs_factor;
    double obs_factor_self;
    int no_collision_exception;
-   int no_report_cost;
+   char dat_filename[1024];
+   char trajs_fileformstr[1024];
    /* stuff we compute later */
+   char trajs_filename[1024];
    int * adofindices;
    struct cd_chomp * c;
    struct cost_helper h;
@@ -804,7 +814,30 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    double cost_total;
    double cost_obs;
    double cost_smooth;
-   struct timespec ticks_iterations;
+   FILE * fp_dat;
+   const char * exc;
+   OpenRAVE::TrajectoryBasePtr t;
+   struct timespec ticks;
+   struct timespec ticks_tic;
+   struct timespec ticks_toc;
+   
+   /* the exception string */
+   exc = 0;
+   
+   /* initialize all mallocs to zero */
+   c = 0;
+   GjlimitAinv = 0;
+   Gjlimit = 0;
+   h.rsdfs = 0;
+   h.J = 0;
+   h.J2 = 0;
+   h.sphere_poss = 0;
+   h.sphere_vels = 0;
+   h.sphere_accs = 0;
+   h.sphere_jacs = 0;
+   adofindices = 0;
+   spheres_active = 0;
+   fp_dat = 0;
    
    /* lock environment */
    lockenv = OpenRAVE::EnvironmentMutex::scoped_lock(this->e->GetMutex());
@@ -819,7 +852,8 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    obs_factor = 200.0;
    obs_factor_self = 10.0;
    no_collision_exception = 0;
-   no_report_cost = 0;
+   dat_filename[0] = 0;
+   trajs_fileformstr[0] = 0;
    
    /* parse arguments into robot */
    {
@@ -834,19 +868,19 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
       {
          if (strp_skipprefix(&cur, (char *)"robot"))
          {
-            if (r.get()) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("Only one robot can be passed!"); }
+            if (r.get()) { free(in); exc = "Only one robot can be passed!"; goto error; }
             sscanf(cur, " %s%n", buf, &len); cur += len;
             r = this->e->GetRobot(buf)/*.get()*/;
-            if (!r.get()) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("Could not find robot that name!"); }
+            if (!r.get()) { free(in); exc = "Could not find robot that name!"; goto error; }
             RAVELOG_INFO("Using robot %s.\n", r->GetName().c_str());
             continue;
          }
          if (strp_skipprefix(&cur, (char *)"adofgoal"))
          {
-            if (adofgoal) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("Only one adofgoal can be passed!"); }
-            if (starttraj.get()) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("Cannot pass both adofgoal and starttraj!"); }
+            if (adofgoal) { free(in); exc = "Only one adofgoal can be passed!"; goto error; }
+            if (starttraj.get()) { free(in); exc = "Cannot pass both adofgoal and starttraj!"; goto error; }
             sscanf(cur, " %d%n", &n_adofgoal, &len); cur += len;
-            if (n_adofgoal <= 0) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("n_adofgoal must be >0!"); }
+            if (n_adofgoal <= 0) { free(in); exc = "n_adofgoal must be >0!"; goto error; }
             adofgoal = (double *) malloc(n_adofgoal * sizeof(double));
             for (j=0; j<n_adofgoal; j++)
             {
@@ -868,14 +902,14 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          if (strp_skipprefix(&cur, (char *)"starttraj"))
          {
             int ser_len;
-            if (starttraj.get()) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("Only one starttraj can be passed!"); }
-            if (adofgoal) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("Cannot pass both adofgoal and starttraj!"); }
+            if (starttraj.get()) { free(in); exc = "Only one starttraj can be passed!"; goto error; }
+            if (adofgoal) { free(in); exc = "Cannot pass both adofgoal and starttraj!"; goto error; }
             sscanf(cur, " %d%n", &ser_len, &len); cur += len;
             /* skip a space */
-            if (*cur != ' ') { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("syntax is starttraj numchars <string>!"); }
+            if (*cur != ' ') { free(in); exc = "syntax is starttraj numchars <string>!"; goto error; }
             cur++;
             for (j=0; j<ser_len; j++) if (!cur[j]) break;
-            if (j<ser_len) { free(adofgoal); free(in); throw OpenRAVE::openrave_exception("not enough characters in string!"); }
+            if (j<ser_len) { free(in); exc = "not enough characters in string!"; goto error; }
             /* create trajectory */
             starttraj = RaveCreateTrajectory(this->e);
             std::istringstream ser_iss(std::string(cur,ser_len));
@@ -913,9 +947,16 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
             no_collision_exception = 1;
             continue;
          }
-         if (strp_skipprefix(&cur, (char *)"no_report_cost"))
+         if (strp_skipprefix(&cur, (char *)"dat_filename"))
          {
-            no_report_cost = 1;
+            sscanf(cur, " %1023s%n", dat_filename, &len); cur += len;
+            RAVELOG_INFO("Using dat_filename |%s|.\n", dat_filename);
+            continue;
+         }
+         if (strp_skipprefix(&cur, (char *)"trajs_fileformstr"))
+         {
+            sscanf(cur, " %1023s%n", trajs_fileformstr, &len); cur += len;
+            RAVELOG_INFO("Using trajs_fileformstr |%s|.\n", trajs_fileformstr);
             continue;
          }
          break;
@@ -926,28 +967,17 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    
    /* check validity of input arguments ... */
    
-   if (!r.get())
-      { free(adofgoal); throw OpenRAVE::openrave_exception("Did not pass a robot!"); }
-   
-   if (!adofgoal && !starttraj.get())
-      { free(adofgoal); throw OpenRAVE::openrave_exception("Did not pass either adofgoal or starttraj!"); }
-   
-   if (!this->n_sdfs)
-      { free(adofgoal); throw OpenRAVE::openrave_exception("No signed distance fields have yet been computed!"); }
-   
-   if (n_iter < 0)
-      { free(adofgoal); throw OpenRAVE::openrave_exception("n_iter must be >=0!"); }
-   
-   if (lambda < 0.01)
-      { free(adofgoal); throw OpenRAVE::openrave_exception("lambda must be >=0.01!"); }
-   
-   if (n_intpoints < 1)
-      { free(adofgoal); throw OpenRAVE::openrave_exception("n_intpoints must be >=1!"); }
+   if (!r.get()) { exc = "Did not pass a robot!"; goto error; }
+   if (!adofgoal && !starttraj.get()) { exc = "Did not pass either adofgoal or starttraj!"; goto error; }
+   if (!this->n_sdfs) { exc = "No signed distance fields have yet been computed!"; goto error; }
+   if (n_iter < 0) { exc = "n_iter must be >=0!"; goto error; }
+   if (lambda < 0.01) { exc = "lambda must be >=0.01!"; goto error; }
+   if (n_intpoints < 1) { exc = "n_intpoints must be >=1!"; goto error; }
    
    /* ensure the robot has spheres defined */
    {
       boost::shared_ptr<orcdchomp::rdata> d = boost::dynamic_pointer_cast<orcdchomp::rdata>(r->GetReadableInterface("orcdchomp"));
-      if (!d) { free(adofgoal); throw OpenRAVE::openrave_exception("robot does not have a <orcdchomp> tag defined!"); }
+      if (!d) { exc = "robot does not have a <orcdchomp> tag defined!"; goto error; }
       spheres_all = d->spheres;
    }
    
@@ -968,8 +998,22 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    
    /* check that n_adofgoal matches active dof */
    if (adofgoal && (n_dof != n_adofgoal))
-      { printf("n_dof: %d; n_adofgoal: %d\n", n_dof, n_adofgoal);
-         free(adofgoal); throw OpenRAVE::openrave_exception("size of adofgoal does not match active dofs!"); }
+   {
+      printf("n_dof: %d; n_adofgoal: %d\n", n_dof, n_adofgoal);
+      exc = "size of adofgoal does not match active dofs!";
+      goto error;
+   }
+   
+   
+   if (dat_filename[0])
+   {
+      fp_dat = fopen(dat_filename, "w");
+      if (!fp_dat) { exc = "could not open dat_filename file for writing!"; goto error; }
+   }
+   
+   /* OK, input arguments are parsed. Start timing! */
+   CD_OS_TIMESPEC_SET_ZERO(&ticks);
+   clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ticks_tic);
    
    /* check that starttraj has the right ConfigurationSpecification? */
    
@@ -1080,16 +1124,15 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
       }
    }
    free(adofgoal);
+   adofgoal = 0;
    
    /* Initialize CHOMP */
    err = cd_chomp_init(c);
-   if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(h.sphere_poss); free(h.sphere_vels); free(h.sphere_accs); free(h.sphere_jacs); free(adofindices); cd_chomp_destroy(c); free(spheres_active); throw OpenRAVE::openrave_exception("Error initializing chomp instance."); }
+   if (err) { exc = "Error initializing chomp instance."; goto error; }
    
    h.dt = c->dt;
    
    RAVELOG_INFO("iterating CHOMP ...\n");
-   cd_os_timespec_set_zero(&ticks_iterations);
-   TIC()
    for (iter=0; iter<n_iter; iter++)
    {
 #if 0
@@ -1098,14 +1141,38 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
       printf("lambda: %f\n", c->lambda);
 #endif
 
-      if (no_report_cost)
+      /* dump the intermediate trajectory before each iteration */
+      if (trajs_fileformstr[0])
       {
-         cd_chomp_iterate(c, 1, 0, 0, 0);
+         clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ticks_toc);
+         CD_OS_TIMESPEC_SUB(&ticks_toc, &ticks_tic);
+         CD_OS_TIMESPEC_ADD(&ticks, &ticks_toc);
+         sprintf(trajs_filename, trajs_fileformstr, iter);
+         t = OpenRAVE::RaveCreateTrajectory(this->e);
+         t->Init(r->GetActiveConfigurationSpecification());
+         for (i=0; i<n_intpoints+2; i++)
+         {
+            std::vector<OpenRAVE::dReal> vec(c->T_ext_points[i], c->T_ext_points[i]+n_dof);
+            t->Insert(i, vec);
+         }
+         std::ofstream f(trajs_filename);
+         f << std::setprecision(std::numeric_limits<OpenRAVE::dReal>::digits10+1); /// have to do this or otherwise precision gets lost
+         t->serialize(f);
+         f.close();
+         clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ticks_tic);
       }
-      else
+
+      cd_chomp_iterate(c, 1, &cost_total, &cost_obs, &cost_smooth);
+      printf("iter:%2d cost_total:%f cost_obs:%f cost_smooth:%f\n", iter, cost_total, cost_obs, cost_smooth);
+      
+      /* dump stats to data file (note these stats are for trajectory before this iteration) */
+      if (fp_dat)
       {
-         cd_chomp_iterate(c, 1, &cost_total, &cost_obs, &cost_smooth);
-         printf("iter:%2d cost_total:%f cost_obs:%f cost_smooth:%f\n", iter, cost_total, cost_obs, cost_smooth);
+         clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ticks_toc);
+         CD_OS_TIMESPEC_SUB(&ticks_toc, &ticks_tic);
+         CD_OS_TIMESPEC_ADD(&ticks_toc, &ticks);
+         fprintf(fp_dat, "%d %f %f %f %f\n",
+            iter, CD_OS_TIMESPEC_DOUBLE(&ticks_toc), cost_total, cost_obs, cost_smooth);
       }
       
       /* handle joint limits */
@@ -1152,14 +1219,13 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
                      GjlimitAinv,1, c->T,1);
       }
    }
-   TOC(&ticks_iterations)
    
    cd_chomp_iterate(c, 0, &cost_total, &cost_obs, &cost_smooth);
    printf("iter:%2d cost_total:%f cost_obs:%f cost_smooth:%f [FINAL]\n", iter, cost_total, cost_obs, cost_smooth);
    
    printf("done!\n");
    
-   printf("Clock time for %d iterations: %.8f\n", iter, cd_os_timespec_double(&ticks_iterations));
+   /*printf("Clock time for %d iterations: %.8f\n", iter, cd_os_timespec_double(&ticks_iterations));*/
    printf("Time breakdown:\n");
    printf("  ticks_vels         %.8f\n", cd_os_timespec_double(&c->ticks_vels));
    printf("  ticks_callback_pre %.8f\n", cd_os_timespec_double(&c->ticks_callback_pre));
@@ -1171,7 +1237,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    printf("  ticks_smoothcost   %.8f\n", cd_os_timespec_double(&c->ticks_smoothcost));
    
    /* create an openrave trajectory from the result, and send to sout */
-   OpenRAVE::TrajectoryBasePtr t = OpenRAVE::RaveCreateTrajectory(this->e);
+   t = OpenRAVE::RaveCreateTrajectory(this->e);
    t->Init(r->GetActiveConfigurationSpecification());
    for (i=0; i<n_intpoints+2; i++)
    {
@@ -1199,16 +1265,15 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          if (this->e->CheckCollision(r,report))
          {
             RAVELOG_ERROR("Collision: %s\n", report->__str__().c_str());
-            if (!no_collision_exception)
-               { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(h.sphere_poss); free(h.sphere_vels); free(h.sphere_accs); free(h.sphere_jacs); free(adofindices); cd_chomp_destroy(c); free(spheres_active); throw OpenRAVE::openrave_exception("Resulting trajectory is in collision!"); }
+            if (!no_collision_exception) { exc = "Resulting trajectory is in collision!"; goto error; }
          }
       }
    }
    
    t->serialize(sout);
    
-   cd_chomp_destroy(c);
-   
+error:
+   if (c) cd_chomp_destroy(c);
    free(GjlimitAinv);
    free(Gjlimit);
    free(h.rsdfs);
@@ -1220,6 +1285,11 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    free(h.sphere_jacs);
    free(adofindices);
    free(spheres_active);
+   free(adofgoal);
+   if (fp_dat) fclose(fp_dat);
+   
+   if (exc)
+      throw OpenRAVE::openrave_exception(exc);
 
    printf("runchomp done! returning ...\n");
    return true;
