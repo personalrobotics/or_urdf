@@ -788,6 +788,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    double * adofgoal;
    int n_adofgoal;
    int n_iter;
+   double max_time;
    double lambda;
    int n_intpoints;
    double epsilon;
@@ -842,9 +843,11 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    /* lock environment */
    lockenv = OpenRAVE::EnvironmentMutex::scoped_lock(this->e->GetMutex());
    
+   /* default parameters */
    /*r = 0;*/
    adofgoal = 0;
    n_iter = 10;
+   max_time = HUGE_VAL;
    lambda = 10.0;
    n_intpoints = 99;
    epsilon = 0.1; /* in meters */
@@ -897,6 +900,11 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          if (strp_skipprefix(&cur, (char *)"lambda"))
          {
             sscanf(cur, " %lf%n", &lambda, &len); cur += len;
+            continue;
+         }
+         if (strp_skipprefix(&cur, (char *)"max_time"))
+         {
+            sscanf(cur, " %lf%n", &max_time, &len); cur += len;
             continue;
          }
          if (strp_skipprefix(&cur, (char *)"starttraj"))
@@ -1217,6 +1225,15 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          cblas_daxpy(c->m * c->n,
                      1.01 * Gjlimit[largest_idx] / GjlimitAinv[largest_idx],
                      GjlimitAinv,1, c->T,1);
+      }
+      
+      /* quit if we're over time! */
+      {
+         clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ticks_toc);
+         CD_OS_TIMESPEC_SUB(&ticks_toc, &ticks_tic);
+         CD_OS_TIMESPEC_ADD(&ticks_toc, &ticks);
+         if (CD_OS_TIMESPEC_DOUBLE(&ticks_toc) > max_time)
+            break;
       }
    }
    

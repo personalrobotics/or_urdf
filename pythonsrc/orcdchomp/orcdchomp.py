@@ -30,7 +30,8 @@ def computedistancefield(mod, kinbody=None, cube_extent=None, aabb_padding=None,
       cmd += ' cache_filename %s' % cache_filename
    return mod.SendCommand(cmd)
 
-def runchomp(mod, robot=None, adofgoal=None, n_iter=None, lambda_=None, starttraj=None, n_intpoints=None,
+def runchomp(mod, robot=None, adofgoal=None, n_iter=None, max_time=None,
+   lambda_=None, starttraj=None, n_intpoints=None,
    epsilon=None, epsilon_self=None, obs_factor=None, obs_factor_self=None,
    no_collision_exception=None, no_report_cost=None,
    dat_filename=None, trajs_fileformstr=None):
@@ -44,6 +45,8 @@ def runchomp(mod, robot=None, adofgoal=None, n_iter=None, lambda_=None, starttra
       cmd += ' adofgoal %d %s' % (len(adofgoal), ' '.join([str(v) for v in adofgoal]))
    if n_iter is not None:
       cmd += ' n_iter %d' % n_iter
+   if max_time is not None:
+      cmd += ' max_time %f' % max_time
    if lambda_ is not None:
       cmd += ' lambda %0.04f' % lambda_
    if starttraj is not None:
