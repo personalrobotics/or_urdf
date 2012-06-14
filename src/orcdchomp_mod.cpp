@@ -536,6 +536,8 @@ int sphere_cost_pre(struct cost_helper * h, int m_ext, double ** T_ext_points)
    struct orcdchomp::sphere * s;
    boost::multi_array< OpenRAVE::dReal, 2 > orjacobian;
    
+   printf("entered sphere_cost_pre ...\n");
+   
    /* compute positions of all spheres */
    for (ti=0; ti<m_ext; ti++)
    {
@@ -579,6 +581,8 @@ int sphere_cost_pre(struct cost_helper * h, int m_ext, double ** T_ext_points)
    cd_mat_add(h->sphere_accs, h->sphere_poss, m_ext-2, h->n_spheres_active*3);
    cd_mat_add(h->sphere_accs, h->sphere_poss + 2*h->n_spheres_active*3, m_ext-2, h->n_spheres_active*3);
    cd_mat_scale(h->sphere_accs, m_ext-2, h->n_spheres_active*3, 1.0/(h->dt * h->dt));
+   
+   printf("exited sphere_cost_pre ...\n");
    
    return 0;
 }
