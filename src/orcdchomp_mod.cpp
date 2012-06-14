@@ -795,6 +795,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    double max_time;
    double lambda;
    int n_intpoints;
+   int use_momentum;
    double epsilon;
    double epsilon_self;
    double obs_factor;
@@ -854,6 +855,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    max_time = HUGE_VAL;
    lambda = 10.0;
    n_intpoints = 99;
+   use_momentum = 0;
    epsilon = 0.1; /* in meters */
    epsilon_self = 0.04; /* in meters */
    obs_factor = 200.0;
@@ -932,6 +934,11 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          if (strp_skipprefix(&cur, (char *)"n_intpoints"))
          {
             sscanf(cur, " %d%n", &n_intpoints, &len); cur += len;
+            continue;
+         }
+         if (strp_skipprefix(&cur, (char *)"use_momentum"))
+         {
+            use_momentum = 1;
             continue;
          }
          if (strp_skipprefix(&cur, (char *)"epsilon"))
@@ -1102,6 +1109,9 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    /* this parameter affects how fast things settle;
     * 1.0e1 ~ 90% smooth in ~10 iterations
     * bigger, means much slower convergence */
+   
+   if (use_momentum)
+      c->use_momentum = 1;
    
    /* initialize trajectory */
    if (starttraj.get())
