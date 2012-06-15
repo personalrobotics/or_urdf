@@ -31,7 +31,8 @@ def computedistancefield(mod, kinbody=None, cube_extent=None, aabb_padding=None,
    return mod.SendCommand(cmd)
 
 def runchomp(mod, robot=None, adofgoal=None, n_iter=None, max_time=None,
-   lambda_=None, starttraj=None, n_intpoints=None, use_momentum=None,
+   lambda_=None, starttraj=None, n_intpoints=None,
+   use_momentum=None, use_hmc=None, hmc_resample_lambda=None, seed=None,
    epsilon=None, epsilon_self=None, obs_factor=None, obs_factor_self=None,
    no_collision_exception=None, no_report_cost=None,
    dat_filename=None, trajs_fileformstr=None):
@@ -56,6 +57,12 @@ def runchomp(mod, robot=None, adofgoal=None, n_iter=None, max_time=None,
       cmd += ' n_intpoints %d' % n_intpoints
    if use_momentum is not None and use_momentum:
       cmd += ' use_momentum'
+   if use_hmc is not None and use_hmc:
+      cmd += ' use_hmc'
+   if hmc_resample_lambda is not None:
+      cmd += ' hmc_resample_lambda %f' % hmc_resample_lambda
+   if seed is not None:
+      cmd += ' seed %d' % seed
    if epsilon is not None:
       cmd += ' epsilon %f' % epsilon
    if epsilon_self is not None:

@@ -3,6 +3,8 @@
 #include <cblas.h>
 
 extern "C" {
+#include <gsl/gsl_rng.h>
+#include <gsl/gsl_randist.h>
 #include <libcd/chomp.h>
 #include <libcd/grid.h>
 #include <libcd/kin.h>
@@ -536,7 +538,7 @@ int sphere_cost_pre(struct cost_helper * h, int m_ext, double ** T_ext_points)
    struct orcdchomp::sphere * s;
    boost::multi_array< OpenRAVE::dReal, 2 > orjacobian;
    
-   printf("entered sphere_cost_pre ...\n");
+   /*printf("entered sphere_cost_pre ...\n");*/
    
    /* compute positions of all spheres */
    for (ti=0; ti<m_ext; ti++)
@@ -582,7 +584,7 @@ int sphere_cost_pre(struct cost_helper * h, int m_ext, double ** T_ext_points)
    cd_mat_add(h->sphere_accs, h->sphere_poss + 2*h->n_spheres_active*3, m_ext-2, h->n_spheres_active*3);
    cd_mat_scale(h->sphere_accs, m_ext-2, h->n_spheres_active*3, 1.0/(h->dt * h->dt));
    
-   printf("exited sphere_cost_pre ...\n");
+   /*printf("exited sphere_cost_pre ...\n");*/
    
    return 0;
 }
@@ -796,6 +798,9 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    double lambda;
    int n_intpoints;
    int use_momentum;
+   int use_hmc;
+   double hmc_resample_lambda;
+   unsigned int seed;
    double epsilon;
    double epsilon_self;
    double obs_factor;
@@ -826,6 +831,9 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    struct timespec ticks;
    struct timespec ticks_tic;
    struct timespec ticks_toc;
+   int hmc_resample_iter;
+   double hmc_alpha;
+   gsl_rng * rng;
    
    /* the exception string */
    exc = 0;
@@ -844,6 +852,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    adofindices = 0;
    spheres_active = 0;
    fp_dat = 0;
+   rng = 0;
    
    /* lock environment */
    lockenv = OpenRAVE::EnvironmentMutex::scoped_lock(this->e->GetMutex());
@@ -856,6 +865,9 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    lambda = 10.0;
    n_intpoints = 99;
    use_momentum = 0;
+   use_hmc = 0;
+   hmc_resample_lambda = 0.02; /* parameter of exponential distribution over iterations between resamples */
+   seed = 0;
    epsilon = 0.1; /* in meters */
    epsilon_self = 0.04; /* in meters */
    obs_factor = 200.0;
@@ -941,6 +953,21 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
             use_momentum = 1;
             continue;
          }
+         if (strp_skipprefix(&cur, (char *)"use_hmc"))
+         {
+            use_hmc = 1;
+            continue;
+         }
+         if (strp_skipprefix(&cur, (char *)"hmc_resample_lambda"))
+         {
+            sscanf(cur, " %lf%n", &hmc_resample_lambda, &len); cur += len;
+            continue;
+         }
+         if (strp_skipprefix(&cur, (char *)"seed"))
+         {
+            sscanf(cur, " %u%n", &seed, &len); cur += len;
+            continue;
+         }
          if (strp_skipprefix(&cur, (char *)"epsilon"))
          {
             sscanf(cur, " %lf%n", &epsilon, &len); cur += len;
@@ -1023,6 +1050,9 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
       goto error;
    }
    
+   /* allocate rng */
+   rng = gsl_rng_alloc(gsl_rng_default);
+   gsl_rng_set(rng, seed);
    
    if (dat_filename[0])
    {
@@ -1113,6 +1143,10 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    if (use_momentum)
       c->use_momentum = 1;
    
+   if (use_hmc)
+      hmc_resample_iter = 0;
+      /*hmc_iters_until_resample = log(cd_util_rand_double(0.0, 1.0)) / hmc_resample_lambda;*/
+   
    /* initialize trajectory */
    if (starttraj.get())
    {
@@ -1162,6 +1196,21 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
       c->lambda = 10.0 * exp(0.1 * iter);
       printf("lambda: %f\n", c->lambda);
 #endif
+
+      /* resample momentum if using hmc */
+      if (use_hmc && iter == hmc_resample_iter)
+      {
+         hmc_alpha = 100.0 * exp(0.02 * iter);
+         printf("resampling momentum with alpha = %f ...\n", hmc_alpha);
+         
+         for (i=0; i<c->m; i++)
+            for (j=0; j<c->n; j++)
+               c->M[i*c->n+j] = gsl_ran_gaussian(rng, 1.0/sqrt(hmc_alpha));
+         c->leapfrog_first = 1;
+         
+         /* set new resampling iter */
+         hmc_resample_iter += 1 + (int) (- log(cd_util_rand_double(0.0, 1.0)) / hmc_resample_lambda);
+      }
 
       /* dump the intermediate trajectory before each iteration */
       if (trajs_fileformstr[0])
@@ -1317,6 +1366,7 @@ error:
    free(adofindices);
    free(spheres_active);
    free(adofgoal);
+   if (rng) gsl_rng_free(rng);
    if (fp_dat) fclose(fp_dat);
    
    if (exc)

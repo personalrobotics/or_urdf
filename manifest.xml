@@ -4,7 +4,7 @@
   </description>
   <author>Chris Dellin</author>
   <depend package="openrave"/>
-  <depend package="libcd"/>
+  <!--<depend package="libcd"/>-->
   <export>
     <python path="${prefix}/pythonsrc"/>
     <!--<env var="OPENRAVE_PLUGINS" append=":${prefix}/lib"/>-->
