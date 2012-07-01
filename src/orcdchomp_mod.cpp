@@ -1209,7 +1209,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          c->leapfrog_first = 1;
          
          /* set new resampling iter */
-         hmc_resample_iter += 1 + (int) (- log(cd_util_rand_double(0.0, 1.0)) / hmc_resample_lambda);
+         hmc_resample_iter += 1 + (int) (- log(gsl_rng_uniform(rng)) / hmc_resample_lambda);
       }
 
       /* dump the intermediate trajectory before each iteration */
@@ -1247,6 +1247,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
       }
       
       /* handle joint limits */
+      { int num_limadjs; num_limadjs=0;
       while (1)
       {
          double largest_violation;
@@ -1281,6 +1282,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          if (largest_violation == 0.0) break;
          
          /* pre-multiply by Ainv */
+         printf("num_limadjs: %d\n", num_limadjs); 
          cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, c->m, c->n, c->m,
             1.0, c->Ainv,c->m, Gjlimit,c->n, 0.0, GjlimitAinv,c->n);
             
@@ -1288,6 +1290,11 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          cblas_daxpy(c->m * c->n,
                      1.01 * Gjlimit[largest_idx] / GjlimitAinv[largest_idx],
                      GjlimitAinv,1, c->T,1);
+         
+         num_limadjs++;
+         if (num_limadjs == 100)
+            return false;
+      }
       }
       
       /* quit if we're over time! */

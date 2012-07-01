@@ -7,8 +7,7 @@
   <depend package="libcd"/>
   <export>
     <python path="${prefix}/pythonsrc"/>
-    <!--<env var="OPENRAVE_PLUGINS" append=":${prefix}/lib"/>-->
-    <python path="ENV/OPENRAVE_PLUGINS+=\x3A${prefix}/lib"/> <!-- literal \x3A turned into a : -->
+    <openrave plugins="${prefix}/lib"/>
   </export>
 </package>
 
