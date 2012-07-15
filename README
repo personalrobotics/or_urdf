@@ -1,0 +1,3 @@
+This package supports both the ROS build system
+(through the Makefile and CMakeLists.txt files)
+and autotools for standard UNIX-like installs.

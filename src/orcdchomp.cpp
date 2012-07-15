@@ -1,3 +1,11 @@
+/** \file orcdchomp.cpp
+ * \brief orcdchomp entry point from OpenRAVE.
+ * \author Christopher Dellin
+ * \date 2012
+ */
+
+/* (C) Copyright 2012 Carnegie Mellon University */
+
 #include <cstdio>
 #include <cstring>
 #include <boost/bind.hpp>

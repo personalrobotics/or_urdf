@@ -1,3 +1,10 @@
+# \file orcdchomp.py
+# \brief Python interface to orcdchomp.
+# \author Christopher Dellin
+# \date 2012
+
+# (C) Copyright 2012 Carnegie Mellon University
+
 import types
 import openravepy
 

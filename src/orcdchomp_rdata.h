@@ -1,3 +1,11 @@
+/** \file orcdchomp_rdata.h
+ * \brief Interface to orcdchomp_rdata, a parser for sphere data provided
+ *        with an OpenRAVE robot XML file.
+ * \author Christopher Dellin
+ * \date 2012
+ */
+
+/* (C) Copyright 2012 Carnegie Mellon University */
 
 /* requires:
  *  - openrave/openrave.h

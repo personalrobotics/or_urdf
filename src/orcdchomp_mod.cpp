@@ -1,3 +1,11 @@
+/** \file orcdchomp_mod.cpp
+ * \brief Implementation of the orcdchomp module, an implementation of CHOMP
+ *        using libcd.
+ * \author Christopher Dellin
+ * \date 2012
+ */
+
+/* (C) Copyright 2012 Carnegie Mellon University */
 
 #include <time.h>
 #include <cblas.h>
@@ -8,7 +16,7 @@ extern "C" {
 #include <libcd/chomp.h>
 #include <libcd/grid.h>
 #include <libcd/kin.h>
-#include <libcd/mat.h>
+#include <libcd/mat.h>g
 #include <libcd/os.h>
 #include <libcd/util.h>
 }
@@ -1282,7 +1290,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          if (largest_violation == 0.0) break;
          
          /* pre-multiply by Ainv */
-         printf("num_limadjs: %d\n", num_limadjs); 
+         /*printf("num_limadjs: %d\n", num_limadjs);*/
          cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, c->m, c->n, c->m,
             1.0, c->Ainv,c->m, Gjlimit,c->n, 0.0, GjlimitAinv,c->n);
             

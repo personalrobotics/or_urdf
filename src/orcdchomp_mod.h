@@ -1,3 +1,11 @@
+/** \file orcdchomp_mod.h
+ * \brief Interface to the orcdchomp module, an implementation of CHOMP
+ *        using libcd.
+ * \author Christopher Dellin
+ * \date 2012
+ */
+
+/* (C) Copyright 2012 Carnegie Mellon University */
 
 /* requires:
  *  - openrave/openrave.h
