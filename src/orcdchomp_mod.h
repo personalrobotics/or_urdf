@@ -11,6 +11,8 @@
  *  - openrave/openrave.h
  * */
 
+#include "orcwrap.h"
+
 namespace orcdchomp
 {
 
@@ -24,16 +26,17 @@ public:
    int n_sdfs;
    struct sdf * sdfs;
    
-   bool viewspheres(std::ostream& sout, std::istream& sinput);
-   bool computedistancefield(std::ostream& sout, std::istream& sinput);
-   bool runchomp(std::ostream& sout, std::istream& sinput);
+   int viewspheres(int argc, char * argv[], std::ostream& sout);
+   int computedistancefield(int argc, char * argv[], std::ostream& sout);
+   int runchomp(int argc, char * argv[], std::ostream& sout);
 
    mod(OpenRAVE::EnvironmentBasePtr penv) : OpenRAVE::ModuleBase(penv)
    {
-      __description = "orcdchomp: implement chomp using libcd";
-      RegisterCommand("viewspheres",boost::bind(&mod::viewspheres,this,_1,_2),"view spheres");
-      RegisterCommand("computedistancefield",boost::bind(&mod::computedistancefield,this,_1,_2),"compute distance field");
-      RegisterCommand("runchomp",boost::bind(&mod::runchomp,this,_1,_2),"run chomp");
+      __description = "orcdchomp: implementation chomp using libcd";
+      RegisterCommand("viewspheres",orcwrap(boost::bind(&mod::viewspheres,this,_1,_2,_3)),"view spheres");
+      RegisterCommand("computedistancefield",orcwrap(boost::bind(&mod::computedistancefield,this,_1,_2,_3)),"compute distance field");
+      RegisterCommand("runchomp",orcwrap(boost::bind(&mod::runchomp,this,_1,_2,_3)),"run chomp");
+      
       this->e = penv;
       this->n_sdfs = 0;
       this->sdfs = 0;

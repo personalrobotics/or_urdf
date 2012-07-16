@@ -15,10 +15,12 @@ extern "C" {
 #include <gsl/gsl_randist.h>
 #include <libcd/chomp.h>
 #include <libcd/grid.h>
+#include <libcd/grid_flood.h>
 #include <libcd/kin.h>
-#include <libcd/mat.h>g
+#include <libcd/mat.h>
 #include <libcd/os.h>
 #include <libcd/util.h>
+#include <libcd/util_shparse.h>
 }
 
 #include <openrave/openrave.h>
@@ -40,7 +42,7 @@ extern "C" {
 
 namespace orcdchomp
 {
-   
+
 struct sdf
 {
    char kinbody_name[256];
@@ -52,98 +54,6 @@ struct sdf
 /* ======================================================================== *
  * useful utilities
  */
-
-char * str_from_istream(std::istream& sinput)
-{
-   char * str;
-   std::ostringstream oss;
-   oss << sinput.rdbuf();
-   str = (char *) malloc(strlen(oss.str().c_str())+1);
-   if (!str) return 0;
-   strcpy(str, oss.str().c_str());
-   return str;
-}
-
-/* skips spaces, then prefix;
- * returns 1 on success, 0 on failure */
-int strp_skipprefix(char ** strp, char * prefix)
-{
-   int len;
-   char * str;
-   str = *strp;
-   while (*str==' ') str++;
-   len = strlen(prefix);
-   if (strncmp(str,prefix,len))
-      return 0;
-   *strp = str + len;
-   return 1;
-}
-
-/* For now, this wraps all dimensions */
-int grid_flood_fill(struct cd_grid * g, size_t index_start, int (*replace)(void *, void *), void * rptr)
-{
-   struct stack
-   {
-      struct stack * next;
-      size_t index;
-   };
-   
-   int ret;
-   struct stack * s;
-   struct stack * popped;
-   size_t index;
-   int ni;
-   int pm;
-   int * subs;
-   int sub_save;
-   
-   subs = (int *) malloc(g->n * sizeof(int));
-   if (!subs) return -1;
-   
-   /* Start with a stack with one node */
-   s = (struct stack *) malloc(sizeof(struct stack));
-   if (!s) { free(subs); return -1; }
-   s->next = 0;
-   s->index = index_start;
-   
-   /* Flood fill! */
-   ret = 0;
-   while (s)
-   {
-      /* Pop */
-      popped = s;
-      s = s->next;
-      index = popped->index;
-      free(popped);
-      
-      /* Attempt replace (continue if failed) */
-      if (!replace(cd_grid_get_index(g,index), rptr)) continue;
-      
-      cd_grid_index_to_subs(g, index, subs);
-      
-      /* Add neighbors to stack */
-      for (ni=0; ni<g->n; ni++)
-      for (pm=0; pm<2; pm++)
-      {
-         sub_save = subs[ni];
-         subs[ni] += pm==0 ? -1 : 1;
-         /* don't wrap */
-         if (subs[ni] < 0) { subs[ni] = sub_save; continue; } /*subs[ni] += g->sizes[ni];*/
-         if (subs[ni] >= g->sizes[ni]) { subs[ni] = sub_save; continue; } /*subs[ni] -= g->sizes[ni];*/
-         cd_grid_index_from_subs(g, &index, subs);
-         subs[ni] = sub_save;
-         
-         popped = (struct stack *) malloc(sizeof(struct stack));
-         if (!popped) { ret = -1; continue; }
-         popped->next = s;
-         popped->index = index;
-         s = popped;
-      }
-   }
-   
-   free(subs);
-   return ret;
-}
 
 int replace_1_to_0(double * val, void * rptr)
 {
@@ -160,7 +70,7 @@ int replace_1_to_0(double * val, void * rptr)
  * module commands
  */
 
-bool mod::viewspheres(std::ostream& sout, std::istream& sinput)
+int mod::viewspheres(int argc, char * argv[], std::ostream& sout)
 {
    int i;
    OpenRAVE::EnvironmentMutex::scoped_lock lockenv(this->e->GetMutex());
@@ -169,30 +79,23 @@ bool mod::viewspheres(std::ostream& sout, std::istream& sinput)
    struct orcdchomp::sphere * s;
    struct orcdchomp::sphere * spheres;
    
-   /* parse arguments into robot */
+   /* parse command line arguments */
+   for (i=1; i<argc; i++)
    {
-      char * in;
-      char * cur;
-      char buf[64];
-      int len;
-      in = str_from_istream(sinput);
-      if (!in) { throw OpenRAVE::openrave_exception("Out of memory!"); }
-      cur = in;
-      while (1)
+      if (strcmp(argv[i],"robot")==0 && i+1<argc)
       {
-         if (strp_skipprefix(&cur, (char *)"robot"))
-         {
-            if (r.get()) { free(in); throw OpenRAVE::openrave_exception("Only one robot can be passed!"); }
-            sscanf(cur, " %s%n", buf, &len); cur += len;
-            r = this->e->GetRobot(buf)/*.get()*/;
-            if (!r.get()) { free(in); throw OpenRAVE::openrave_exception("Could not find robot with that name!"); }
-            RAVELOG_INFO("Using robot %s.\n", r->GetName().c_str());
-            continue;
-         }
-         break;
+         if (r.get()) throw OpenRAVE::openrave_exception("Only one robot can be passed!");
+         RAVELOG_INFO("Getting robot named |%s|.\n", argv[i+1]);
+         r = this->e->GetRobot(argv[++i]);
+         if (!r.get()) throw OpenRAVE::openrave_exception("Could not find robot with that name!");
+         RAVELOG_INFO("Using robot %s.\n", r->GetName().c_str());
       }
-      if (cur[0]) RAVELOG_WARN("remaining string: |%s|! continuing ...\n", cur);
-      free(in);
+      else break;
+   }
+   if (i<argc)
+   {
+      for (; i<argc; i++) RAVELOG_ERROR("argument %s not known!\n", argv[i]);
+      throw OpenRAVE::openrave_exception("Bad arguments!");
    }
    
    /* check that we have everything */
@@ -225,7 +128,7 @@ bool mod::viewspheres(std::ostream& sout, std::istream& sinput)
       this->e->AddKinBody(sbody);
    }
    
-   return true;
+   return 0;
 }
 
 
@@ -234,7 +137,7 @@ bool mod::viewspheres(std::ostream& sout, std::istream& sinput)
  * 
  * note: does aabb include disabled bodies? probably, but we might hope not ...
  * */
-bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
+int mod::computedistancefield(int argc, char * argv[], std::ostream& sout)
 {
    int i;
    int err;
@@ -243,7 +146,7 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
    /* parameters */
    double cube_extent;
    double aabb_padding;
-   char cache_filename[1024];
+   char * cache_filename;
    /* other */
    double temp;
    OpenRAVE::KinBodyPtr cube;
@@ -260,52 +163,36 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
    
    cube_extent = 0.02;
    aabb_padding = 0.2;
-   cache_filename[0] = 0;
-   
-   /* parse arguments into kinbody */
+   cache_filename = 0;
+
+   /* parse command line arguments */
+   for (i=1; i<argc; i++)
    {
-      char * in;
-      char * cur;
-      char buf[64];
-      int len;
-      in = str_from_istream(sinput);
-      if (!in) { throw OpenRAVE::openrave_exception("Out of memory!"); }
-      cur = in;
-      while (1)
+      if (strcmp(argv[i],"kinbody")==0 && i+1<argc)
       {
-         if (strp_skipprefix(&cur, (char *)"kinbody"))
-         {
-            if (kinbody) { free(in); throw OpenRAVE::openrave_exception("Only one kinbody can be passed!"); }
-            sscanf(cur, " %s%n", buf, &len); cur += len;
-            kinbody = this->e->GetKinBody(buf);
-            if (!kinbody.get()) { free(in); throw OpenRAVE::openrave_exception("Could not find kinbody with that name!"); }
-            RAVELOG_INFO("Using kinbody |%s|.\n", kinbody->GetName().c_str());
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"aabb_padding"))
-         {
-            sscanf(cur, " %lf%n", &aabb_padding, &len); cur += len;
-            RAVELOG_INFO("Using aabb_padding |%f|.\n", aabb_padding);
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"cube_extent"))
-         {
-            sscanf(cur, " %lf%n", &cube_extent, &len); cur += len;
-            RAVELOG_INFO("Using cube_extent |%f|.\n", cube_extent);
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"cache_filename"))
-         {
-            sscanf(cur, " %1023s%n", cache_filename, &len); cur += len;
-            RAVELOG_INFO("Using cache_filename |%s|.\n", cache_filename);
-            continue;
-         }
-         break;
+         if (kinbody.get()) throw OpenRAVE::openrave_exception("Only one kinbody can be passed!");
+         kinbody = this->e->GetKinBody(argv[++i]);
+         if (!kinbody.get()) throw OpenRAVE::openrave_exception("Could not find kinbody with that name!");
       }
-      if (cur[0]) RAVELOG_WARN("remaining string: |%s|! continuing ...\n", cur);
-      free(in);
+      else if (strcmp(argv[i],"aabb_padding")==0 && i+1<argc)
+         aabb_padding = atof(argv[++i]);
+      else if (strcmp(argv[i],"cube_extent")==0 && i+1<argc)
+         cube_extent = atof(argv[++i]);
+      else if (strcmp(argv[i],"cache_filename")==0 && i+1<argc)
+         cache_filename = argv[++i];
+      else break;
+   }
+   if (i<argc)
+   {
+      for (; i<argc; i++) RAVELOG_ERROR("argument %s not known!\n", argv[i]);
+      throw OpenRAVE::openrave_exception("Bad arguments!");
    }
    
+   RAVELOG_INFO("Using kinbody %s.\n", kinbody->GetName().c_str());
+   RAVELOG_INFO("Using aabb_padding |%f|.\n", aabb_padding);
+   RAVELOG_INFO("Using cube_extent |%f|.\n", cube_extent);
+   RAVELOG_INFO("Using cache_filename |%s|.\n", cache_filename ? cache_filename : "none passed");
+
    /* check that we have everything */
    if (!kinbody.get()) throw OpenRAVE::openrave_exception("Did not pass all required args!");
    
@@ -320,7 +207,7 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
    sdf_new.grid = 0;
    
    /* attempt to load the sdf from file */
-   if (cache_filename[0]) do
+   if (cache_filename) do
    {
       FILE * fp;
       printf("reading sdf from file %s ...\n", cache_filename);
@@ -458,7 +345,7 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
          double point[3] = {2.0, 2.0, 3.999}; /* center, at the top */
          cd_grid_lookup_index(g_obs, point, &idx);
       }
-      grid_flood_fill(g_obs, idx, (int (*)(void *, void *))replace_1_to_0, 0);
+      cd_grid_flood_fill(g_obs, idx, 0, (int (*)(void *, void *))replace_1_to_0, 0);
       
       /* change any remaining 1.0 cells to HUGE_VAL (assumed inside of obstacles) */
       for (idx=0; idx<g_obs->ncells; idx++)
@@ -471,7 +358,7 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
       cd_grid_destroy(g_obs);
       
       /* if we were passed a cache_filename, save what we just computed! */
-      if (cache_filename[0])
+      if (cache_filename)
       {
          FILE * fp;
          printf("saving sdf to file %s ...\n", cache_filename);
@@ -495,7 +382,7 @@ bool mod::computedistancefield(std::ostream& sout, std::istream& sinput)
    this->sdfs[this->n_sdfs] = sdf_new;
    this->n_sdfs++;
    
-   return true;
+   return 0;
 }
 
 /* a rooted sdf (fixed in the world) */
@@ -789,7 +676,7 @@ int sphere_cost(struct cost_helper * h, int ti, double * c_point, double * c_vel
  * uses the active dofs of the passed robot
  * initialized with a straight-line trajectory
  * */
-bool mod::runchomp(std::ostream& sout, std::istream& sinput)
+int mod::runchomp(int argc, char * argv[], std::ostream& sout)
 {
    int i;
    int j;
@@ -814,8 +701,8 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    double obs_factor;
    double obs_factor_self;
    int no_collision_exception;
-   char dat_filename[1024];
-   char trajs_fileformstr[1024];
+   char * dat_filename;
+   char * trajs_fileformstr;
    /* stuff we compute later */
    char trajs_filename[1024];
    int * adofindices;
@@ -881,146 +768,83 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    obs_factor = 200.0;
    obs_factor_self = 10.0;
    no_collision_exception = 0;
-   dat_filename[0] = 0;
-   trajs_fileformstr[0] = 0;
+   dat_filename = 0;
+   trajs_fileformstr = 0;
    
-   /* parse arguments into robot */
+   /* parse command line arguments */
+   for (i=1; i<argc; i++)
    {
-      char * in;
-      char * cur;
-      char buf[64];
-      int len;
-      in = str_from_istream(sinput);
-      if (!in) throw OpenRAVE::openrave_exception("Out of memory!");
-      cur = in;
-      while (1)
+      if (strcmp(argv[i],"robot")==0 && i+1<argc)
       {
-         if (strp_skipprefix(&cur, (char *)"robot"))
+         if (r.get()) { exc = "Only one robot can be passed!"; goto error; }
+         r = this->e->GetRobot(argv[++i]);
+         if (!r.get()) { exc = "Could not find robot with that name!"; goto error; }
+      }
+      else if (strcmp(argv[i],"adofgoal")==0 && i+1<argc)
+      {
+         if (adofgoal) { exc = "Only one adofgoal can be passed!"; goto error; }
+         if (starttraj.get()) { exc = "Cannot pass both adofgoal and starttraj!"; goto error; }
          {
-            if (r.get()) { free(in); exc = "Only one robot can be passed!"; goto error; }
-            sscanf(cur, " %s%n", buf, &len); cur += len;
-            r = this->e->GetRobot(buf)/*.get()*/;
-            if (!r.get()) { free(in); exc = "Could not find robot that name!"; goto error; }
-            RAVELOG_INFO("Using robot %s.\n", r->GetName().c_str());
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"adofgoal"))
-         {
-            if (adofgoal) { free(in); exc = "Only one adofgoal can be passed!"; goto error; }
-            if (starttraj.get()) { free(in); exc = "Cannot pass both adofgoal and starttraj!"; goto error; }
-            sscanf(cur, " %d%n", &n_adofgoal, &len); cur += len;
-            if (n_adofgoal <= 0) { free(in); exc = "n_adofgoal must be >0!"; goto error; }
+            char ** adofgoal_argv;
+            cd_util_shparse(argv[++i], &n_adofgoal, &adofgoal_argv);
             adofgoal = (double *) malloc(n_adofgoal * sizeof(double));
             for (j=0; j<n_adofgoal; j++)
-            {
-               sscanf(cur, " %lf%n", &adofgoal[j], &len); cur += len;
-            }
-            cd_mat_vec_print("parsed adofgoal: ", adofgoal, n_adofgoal);
-            continue;
+               adofgoal[j] = atof(adofgoal_argv[j]);
+            free(adofgoal_argv);
          }
-         if (strp_skipprefix(&cur, (char *)"n_iter"))
-         {
-            sscanf(cur, " %d%n", &n_iter, &len); cur += len;
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"lambda"))
-         {
-            sscanf(cur, " %lf%n", &lambda, &len); cur += len;
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"max_time"))
-         {
-            sscanf(cur, " %lf%n", &max_time, &len); cur += len;
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"starttraj"))
-         {
-            int ser_len;
-            if (starttraj.get()) { free(in); exc = "Only one starttraj can be passed!"; goto error; }
-            if (adofgoal) { free(in); exc = "Cannot pass both adofgoal and starttraj!"; goto error; }
-            sscanf(cur, " %d%n", &ser_len, &len); cur += len;
-            /* skip a space */
-            if (*cur != ' ') { free(in); exc = "syntax is starttraj numchars <string>!"; goto error; }
-            cur++;
-            for (j=0; j<ser_len; j++) if (!cur[j]) break;
-            if (j<ser_len) { free(in); exc = "not enough characters in string!"; goto error; }
-            /* create trajectory */
-            starttraj = RaveCreateTrajectory(this->e);
-            std::istringstream ser_iss(std::string(cur,ser_len));
-            starttraj->deserialize(ser_iss);
-            cur += ser_len;
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"n_intpoints"))
-         {
-            sscanf(cur, " %d%n", &n_intpoints, &len); cur += len;
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"use_momentum"))
-         {
-            use_momentum = 1;
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"use_hmc"))
-         {
-            use_hmc = 1;
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"hmc_resample_lambda"))
-         {
-            sscanf(cur, " %lf%n", &hmc_resample_lambda, &len); cur += len;
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"seed"))
-         {
-            sscanf(cur, " %u%n", &seed, &len); cur += len;
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"epsilon"))
-         {
-            sscanf(cur, " %lf%n", &epsilon, &len); cur += len;
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"epsilon_self"))
-         {
-            sscanf(cur, " %lf%n", &epsilon_self, &len); cur += len;
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"obs_factor"))
-         {
-            sscanf(cur, " %lf%n", &obs_factor, &len); cur += len;
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"obs_factor_self"))
-         {
-            sscanf(cur, " %lf%n", &obs_factor_self, &len); cur += len;
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"no_collision_exception"))
-         {
-            no_collision_exception = 1;
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"dat_filename"))
-         {
-            sscanf(cur, " %1023s%n", dat_filename, &len); cur += len;
-            RAVELOG_INFO("Using dat_filename |%s|.\n", dat_filename);
-            continue;
-         }
-         if (strp_skipprefix(&cur, (char *)"trajs_fileformstr"))
-         {
-            sscanf(cur, " %1023s%n", trajs_fileformstr, &len); cur += len;
-            RAVELOG_INFO("Using trajs_fileformstr |%s|.\n", trajs_fileformstr);
-            continue;
-         }
-         break;
+         cd_mat_vec_print("parsed adofgoal: ", adofgoal, n_adofgoal);
       }
-      if (cur[0]) RAVELOG_WARN("remaining string: |%s|! continuing ...\n", cur);
-      free(in);
+      else if (strcmp(argv[i],"n_iter")==0 && i+1<argc)
+         n_iter = atoi(argv[++i]);
+      else if (strcmp(argv[i],"lambda")==0 && i+1<argc)
+         lambda = atof(argv[++i]);
+      else if (strcmp(argv[i],"max_time")==0 && i+1<argc)
+         max_time = atof(argv[++i]);
+      else if (strcmp(argv[i],"starttraj")==0 && i+1<argc)
+      {
+         if (starttraj.get()) { exc = "Only one starttraj can be passed!"; goto error; }
+         if (adofgoal) { exc = "Cannot pass both adofgoal and starttraj!"; goto error; }
+         starttraj = RaveCreateTrajectory(this->e);
+         std::istringstream ser_iss(std::string(argv[++i]));
+         starttraj->deserialize(ser_iss);
+      }
+      else if (strcmp(argv[i],"n_intpoints")==0 && i+1<argc)
+         n_intpoints = atoi(argv[++i]);
+      else if (strcmp(argv[i],"use_momentum")==0)
+         use_momentum = 1;
+      else if (strcmp(argv[i],"use_hmc")==0)
+         use_hmc = 1;
+      else if (strcmp(argv[i],"hmc_resample_lambda")==0 && i+1<argc)
+         hmc_resample_lambda = atof(argv[++i]);
+      else if (strcmp(argv[i],"seed")==0 && i+1<argc)
+         sscanf(argv[++i], "%u", &seed);
+      else if (strcmp(argv[i],"epsilon")==0 && i+1<argc)
+         epsilon = atof(argv[++i]);
+      else if (strcmp(argv[i],"epsilon_self")==0 && i+1<argc)
+         epsilon_self = atof(argv[++i]);
+      else if (strcmp(argv[i],"obs_factor")==0 && i+1<argc)
+         obs_factor = atof(argv[++i]);
+      else if (strcmp(argv[i],"obs_factor_self")==0 && i+1<argc)
+         obs_factor_self = atof(argv[++i]);
+      else if (strcmp(argv[i],"no_collision_exception")==0)
+         no_collision_exception = 1;
+      else if (strcmp(argv[i],"dat_filename")==0 && i+1<argc)
+         dat_filename = argv[++i];
+      else if (strcmp(argv[i],"trajs_fileformstr")==0 && i+1<argc)
+         trajs_fileformstr = argv[++i];
+      else break;
+   }
+   if (i<argc)
+   {
+      for (; i<argc; i++) RAVELOG_ERROR("argument %s not known!\n", argv[i]);
+      throw OpenRAVE::openrave_exception("Bad arguments!");
    }
    
-   /* check validity of input arguments ... */
+   RAVELOG_INFO("Using robot %s.\n", r->GetName().c_str());
+   if (dat_filename) RAVELOG_INFO("Using dat_filename |%s|.\n", dat_filename);
+   if (trajs_fileformstr) RAVELOG_INFO("Using trajs_fileformstr |%s|.\n", trajs_fileformstr);
    
+   /* check validity of input arguments ... */
    if (!r.get()) { exc = "Did not pass a robot!"; goto error; }
    if (!adofgoal && !starttraj.get()) { exc = "Did not pass either adofgoal or starttraj!"; goto error; }
    if (!this->n_sdfs) { exc = "No signed distance fields have yet been computed!"; goto error; }
@@ -1062,7 +886,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
    rng = gsl_rng_alloc(gsl_rng_default);
    gsl_rng_set(rng, seed);
    
-   if (dat_filename[0])
+   if (dat_filename)
    {
       fp_dat = fopen(dat_filename, "w");
       if (!fp_dat) { exc = "could not open dat_filename file for writing!"; goto error; }
@@ -1221,7 +1045,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
       }
 
       /* dump the intermediate trajectory before each iteration */
-      if (trajs_fileformstr[0])
+      if (trajs_fileformstr)
       {
          clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ticks_toc);
          CD_OS_TIMESPEC_SUB(&ticks_toc, &ticks_tic);
@@ -1301,7 +1125,7 @@ bool mod::runchomp(std::ostream& sout, std::istream& sinput)
          
          num_limadjs++;
          if (num_limadjs == 100)
-            return false;
+            return -1;
       }
       }
       
@@ -1388,7 +1212,7 @@ error:
       throw OpenRAVE::openrave_exception(exc);
 
    printf("runchomp done! returning ...\n");
-   return true;
+   return 0;
 }
 
 } /* namespace orcdchomp */
