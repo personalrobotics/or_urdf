@@ -805,7 +805,8 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
          if (starttraj.get()) { exc = "Only one starttraj can be passed!"; goto error; }
          if (adofgoal) { exc = "Cannot pass both adofgoal and starttraj!"; goto error; }
          starttraj = RaveCreateTrajectory(this->e);
-         std::istringstream ser_iss(std::string(argv[++i]));
+         std::string my_string(argv[++i]);
+         std::istringstream ser_iss(my_string);
          starttraj->deserialize(ser_iss);
       }
       else if (strcmp(argv[i],"n_intpoints")==0 && i+1<argc)
