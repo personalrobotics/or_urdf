@@ -703,6 +703,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    int no_collision_exception;
    char * dat_filename;
    char * trajs_fileformstr;
+   int allowlimadj;
    /* stuff we compute later */
    char trajs_filename[1024];
    int * adofindices;
@@ -770,6 +771,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    no_collision_exception = 0;
    dat_filename = 0;
    trajs_fileformstr = 0;
+   allowlimadj = 0;
    
    /* parse command line arguments */
    for (i=1; i<argc; i++)
@@ -833,6 +835,8 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
          dat_filename = argv[++i];
       else if (strcmp(argv[i],"trajs_fileformstr")==0 && i+1<argc)
          trajs_fileformstr = argv[++i];
+      else if (strcmp(argv[i],"allowlimadj")==0 && i+1<argc)
+         allowlimadj = 1;
       else break;
    }
    if (i<argc)
@@ -1014,6 +1018,33 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    }
    free(adofgoal);
    adofgoal = 0;
+   
+   /* if allowlimadj was passed, tweak the limits to include the starting trajectory! */
+   if (allowlimadj)
+   {
+      for (j=0; j<n_dof; j++)
+      {
+         double old_limit;
+         
+         /* yield lower limit */
+         old_limit = vec_jlimit_lower[adofindices[j]];
+         for (i=0; i<n_intpoints+2; i++)
+            if (vec_jlimit_lower[adofindices[j]] > c->T_ext_points[i][j])
+               vec_jlimit_lower[adofindices[j]] = c->T_ext_points[i][j];
+         if (old_limit != vec_jlimit_lower[adofindices[j]])
+            RAVELOG_WARN("Adjusting lower limit for joint %d (active %d) from %f to %f!\n",
+               adofindices[j], j, old_limit, vec_jlimit_lower[adofindices[j]]);
+         
+         /* yield upper limit */
+         old_limit = vec_jlimit_upper[adofindices[j]];
+         for (i=0; i<n_intpoints+2; i++)
+            if (vec_jlimit_upper[adofindices[j]] < c->T_ext_points[i][j])
+               vec_jlimit_upper[adofindices[j]] = c->T_ext_points[i][j];
+         if (old_limit != vec_jlimit_upper[adofindices[j]])
+            RAVELOG_WARN("Adjusting upper limit for joint %d (active %d) from %f to %f!\n",
+               adofindices[j], j, old_limit, vec_jlimit_upper[adofindices[j]]);
+      }
+   }
    
    /* Initialize CHOMP */
    err = cd_chomp_init(c);

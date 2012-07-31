@@ -47,7 +47,7 @@ def runchomp(mod, robot=None, adofgoal=None, n_iter=None, max_time=None,
    use_momentum=None, use_hmc=None, hmc_resample_lambda=None, seed=None,
    epsilon=None, epsilon_self=None, obs_factor=None, obs_factor_self=None,
    no_collision_exception=None, no_report_cost=None,
-   dat_filename=None, trajs_fileformstr=None):
+   dat_filename=None, trajs_fileformstr=None, allowlimadj=None):
    cmd = 'runchomp'
    if robot is not None:
       if hasattr(robot,'GetName'):
@@ -91,6 +91,8 @@ def runchomp(mod, robot=None, adofgoal=None, n_iter=None, max_time=None,
       cmd += ' dat_filename %s' % shquot(dat_filename)
    if trajs_fileformstr is not None:
       cmd += ' trajs_fileformstr %s' % shquot(trajs_fileformstr)
+   if allowlimadj is not None and allowlimadj:
+      cmd += ' allowlimadj'
    print 'cmd:', cmd
    out_traj_data = mod.SendCommand(cmd)
    return openravepy.RaveCreateTrajectory(mod.GetEnv(),'').deserialize(out_traj_data)
