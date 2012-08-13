@@ -835,7 +835,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
          dat_filename = argv[++i];
       else if (strcmp(argv[i],"trajs_fileformstr")==0 && i+1<argc)
          trajs_fileformstr = argv[++i];
-      else if (strcmp(argv[i],"allowlimadj")==0 && i+1<argc)
+      else if (strcmp(argv[i],"allowlimadj")==0)
          allowlimadj = 1;
       else break;
    }
