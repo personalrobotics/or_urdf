@@ -967,10 +967,12 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    }
    
    /* ok, ready to go! create a chomp solver */
-   err = cd_chomp_create(&c, n_dof, n_intpoints, 1, &h,
-      (int (*)(void *, int, double **))sphere_cost_pre,
-      (int (*)(void *, int, double *, double *, double *, double *))sphere_cost);
+   err = cd_chomp_create(&c, n_dof, n_intpoints, 1);
    if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(h.sphere_poss); free(h.sphere_vels); free(h.sphere_accs); free(h.sphere_jacs); free(adofgoal); free(adofindices); free(spheres_active); throw OpenRAVE::openrave_exception("Error creating chomp instance."); }
+   /* set up obstacle cost */
+   c->cptr = &h;
+   c->cost_pre = (int (*)(void *, int, double **))sphere_cost_pre;
+   c->cost = (int (*)(void *, int, double *, double *, double *, double *))sphere_cost;
    /*c->lambda = 1000000.0;*/
    c->lambda = lambda;
    /* this parameter affects how fast things settle;
@@ -1067,9 +1069,10 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
          hmc_alpha = 100.0 * exp(0.02 * iter);
          printf("resampling momentum with alpha = %f ...\n", hmc_alpha);
          
+         /* the momentum term is now AG */
          for (i=0; i<c->m; i++)
             for (j=0; j<c->n; j++)
-               c->M[i*c->n+j] = gsl_ran_gaussian(rng, 1.0/sqrt(hmc_alpha));
+               c->AG[i*c->n+j] = gsl_ran_gaussian(rng, 1.0/sqrt(hmc_alpha));
          c->leapfrog_first = 1;
          
          /* set new resampling iter */
