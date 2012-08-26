@@ -7,4 +7,4 @@ set(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/lib)
 SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 
 rosbuild_add_library(orcdchomp src/orcdchomp.cpp src/orcdchomp_mod.cpp src/orcdchomp_rdata.cpp src/orcwrap.cpp)
-target_link_libraries(orcdchomp cd blas)
+#target_link_libraries(orcdchomp cd blas lapacke lapack)

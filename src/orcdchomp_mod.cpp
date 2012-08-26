@@ -210,9 +210,9 @@ int mod::computedistancefield(int argc, char * argv[], std::ostream& sout)
    if (cache_filename) do
    {
       FILE * fp;
-      printf("reading sdf from file %s ...\n", cache_filename);
+      RAVELOG_INFO("reading sdf from file %s ...\n", cache_filename);
       fp = fopen(cache_filename, "rb");
-      if (!fp) { printf("could not read from file!\n"); break; }
+      if (!fp) { RAVELOG_ERROR("could not read from file!\n"); break; }
       /* read struct sdf */
       i = fread(sdf_new.kinbody_name, sizeof(sdf_new.kinbody_name), 1, fp);
       i = fread(sdf_new.pose, sizeof(sdf_new.pose), 1, fp);
@@ -242,8 +242,8 @@ int mod::computedistancefield(int argc, char * argv[], std::ostream& sout)
          kinbody->SetTransform(OpenRAVE::Transform());
          aabb = kinbody->ComputeAABB();
       }
-      printf("    pos: %f %f %f\n", aabb.pos[0], aabb.pos[1], aabb.pos[2]);
-      printf("extents: %f %f %f\n", aabb.extents[0], aabb.extents[1], aabb.extents[2]);
+      RAVELOG_INFO("    pos: %f %f %f\n", aabb.pos[0], aabb.pos[1], aabb.pos[2]);
+      RAVELOG_INFO("extents: %f %f %f\n", aabb.extents[0], aabb.extents[1], aabb.extents[2]);
 
       /* calculate dimension sizes (number of cells) */
       for (i=0; i<3; i++)
@@ -252,7 +252,7 @@ int mod::computedistancefield(int argc, char * argv[], std::ostream& sout)
           * (this is the radius of the biggest herb2 spehere)
           * (note: extents are half the side lengths!) */
          gsdf_sizearray[i] = (int) ceil((aabb.extents[i]+aabb_padding) / cube_extent);
-         printf("gsdf_sizearray[%d]: %d\n", i, gsdf_sizearray[i]);
+         RAVELOG_INFO("gsdf_sizearray[%d]: %d\n", i, gsdf_sizearray[i]);
       }
       
       /* Create a new grid located around the current kinbody;
@@ -303,13 +303,13 @@ int mod::computedistancefield(int argc, char * argv[], std::ostream& sout)
       
       /* go through the grid, testing for collision as we go;
        * collisions are HUGE_VAL, free are 1.0 */
-      printf("computing occupancy grid ...\n");
+      RAVELOG_INFO("computing occupancy grid ...\n");
       for (idx=0; idx<g_obs->ncells; idx++)
       {
          OpenRAVE::Transform t;
          
          if (idx % 100000 == 0)
-            printf("idx=%d (%5.1f%%)...\n", (int)idx, (100.0*((double)idx)/((double)g_obs->ncells)));
+            RAVELOG_INFO("idx=%d (%5.1f%%)...\n", (int)idx, (100.0*((double)idx)/((double)g_obs->ncells)));
          
          /* set cube location */
          t.identity();
@@ -333,14 +333,14 @@ int mod::computedistancefield(int argc, char * argv[], std::ostream& sout)
          }
       }
 
-      printf("found %d/%d collisions!\n", collisions, (int)(g_obs->ncells));
+      RAVELOG_INFO("found %d/%d collisions!\n", collisions, (int)(g_obs->ncells));
       
       /* remove cube */
       this->e->Remove(cube);
       
       /* we assume the point at the very top is free;
        * do flood fill to set all cells that are 1.0 -> 0.0 */
-      printf("performing flood fill ...\n");
+      RAVELOG_INFO("performing flood fill ...\n");
       {
          double point[3] = {2.0, 2.0, 3.999}; /* center, at the top */
          cd_grid_lookup_index(g_obs, point, &idx);
@@ -353,7 +353,7 @@ int mod::computedistancefield(int argc, char * argv[], std::ostream& sout)
             *(double *)cd_grid_get_index(g_obs, idx) = HUGE_VAL;
       
       /* compute the signed distance field (in the module instance) */
-      printf("computing signed distance field ...\n");
+      RAVELOG_INFO("computing signed distance field ...\n");
       cd_grid_double_bin_sdf(&sdf_new.grid, g_obs);
       cd_grid_destroy(g_obs);
       
@@ -361,7 +361,7 @@ int mod::computedistancefield(int argc, char * argv[], std::ostream& sout)
       if (cache_filename)
       {
          FILE * fp;
-         printf("saving sdf to file %s ...\n", cache_filename);
+         RAVELOG_INFO("saving sdf to file %s ...\n", cache_filename);
          fp = fopen(cache_filename, "wb");
          /* write struct sdf */
          fwrite(sdf_new.kinbody_name, sizeof(sdf_new.kinbody_name), 1, fp);
@@ -395,6 +395,7 @@ struct cost_helper_rsdf
 
 struct cost_helper
 {
+   double * traj;
    int n; /* config space dimensionality */
    int n_rsdfs;
    struct cost_helper_rsdf * rsdfs;
@@ -411,20 +412,19 @@ struct cost_helper
    double obs_factor;
    double obs_factor_self;
    
-   /* each of these are indexed by [trajpoints][sphereid][xyz]
-    * and filled by sphere_cost_pre */
+   /* each of these filled by sphere_cost_pre */
    double dt;
-   double * sphere_poss; 
-   double * sphere_vels;
-   double * sphere_accs;
-   double * sphere_jacs; /* [trajpoints][sphereid][3xn] */
+   double * sphere_poss; /* [trajpoint(external)][sphereid][xyz] */
+   double * sphere_vels; /* [trajpoint(internal)][sphereid][3xn] */
+   double * sphere_accs; /* [trajpoint(internal)][sphereid][3xn] */
+   double * sphere_jacs; /* [trajpoint(internal)][sphereid][3xn] */
    
    struct timespec ticks_fk;
    struct timespec ticks_jacobians;
    struct timespec ticks_selfcol;
 };
 
-int sphere_cost_pre(struct cost_helper * h, int m_ext, double ** T_ext_points)
+int sphere_cost_pre(struct cost_helper * h, int m, double ** T_points)
 {
    int ti;
    int i;
@@ -433,13 +433,11 @@ int sphere_cost_pre(struct cost_helper * h, int m_ext, double ** T_ext_points)
    struct orcdchomp::sphere * s;
    boost::multi_array< OpenRAVE::dReal, 2 > orjacobian;
    
-   /*printf("entered sphere_cost_pre ...\n");*/
-   
-   /* compute positions of all spheres */
-   for (ti=0; ti<m_ext; ti++)
+   /* compute positions of all spheres (including external points) */
+   for (ti=0; ti<m+2; ti++)
    {
       /* put the robot in the config */
-      std::vector<OpenRAVE::dReal> vec(T_ext_points[ti], T_ext_points[ti]+h->n);
+      std::vector<OpenRAVE::dReal> vec(&h->traj[ti*h->n], &h->traj[(ti+1)*h->n]);
       TIC()
       h->r->SetActiveDOFValues(vec);
       TOC(&h->ticks_fk)
@@ -457,7 +455,7 @@ int sphere_cost_pre(struct cost_helper * h, int m_ext, double ** T_ext_points)
          TIC()
          h->r->CalculateJacobian(s->linkindex, v, orjacobian);
          TOC(&h->ticks_jacobians)
-         if (ti > 0 && ti < m_ext-1)
+         if (ti > 0 && ti < m+1)
          {
             /* copy the active columns of orjacobian into our J */
             for (i=0; i<3; i++)
@@ -468,19 +466,17 @@ int sphere_cost_pre(struct cost_helper * h, int m_ext, double ** T_ext_points)
    }
    
    /* compute velocities for all internal points */
-   cd_mat_memcpy(h->sphere_vels, h->sphere_poss + 2*h->n_spheres_active*3, m_ext-2, h->n_spheres_active*3);
-   cd_mat_sub(h->sphere_vels, h->sphere_poss, m_ext-2, h->n_spheres_active*3);
-   cd_mat_scale(h->sphere_vels, m_ext-2, h->n_spheres_active*3, 1.0/h->dt);
+   cd_mat_memcpy(h->sphere_vels, h->sphere_poss + 2*h->n_spheres_active*3, m, h->n_spheres_active*3);
+   cd_mat_sub(h->sphere_vels, h->sphere_poss, m, h->n_spheres_active*3);
+   cd_mat_scale(h->sphere_vels, m, h->n_spheres_active*3, 1.0/h->dt);
    
    /* compute accelerations for all internal points */
-   cd_mat_memcpy(h->sphere_accs, h->sphere_poss + h->n_spheres_active*3, m_ext-2, h->n_spheres_active*3);
-   cd_mat_scale(h->sphere_accs, m_ext-2, h->n_spheres_active*3, -2.0);
-   cd_mat_add(h->sphere_accs, h->sphere_poss, m_ext-2, h->n_spheres_active*3);
-   cd_mat_add(h->sphere_accs, h->sphere_poss + 2*h->n_spheres_active*3, m_ext-2, h->n_spheres_active*3);
-   cd_mat_scale(h->sphere_accs, m_ext-2, h->n_spheres_active*3, 1.0/(h->dt * h->dt));
-   
-   /*printf("exited sphere_cost_pre ...\n");*/
-   
+   cd_mat_memcpy(h->sphere_accs, h->sphere_poss + h->n_spheres_active*3, m, h->n_spheres_active*3);
+   cd_mat_scale(h->sphere_accs, m, h->n_spheres_active*3, -2.0);
+   cd_mat_add(h->sphere_accs, h->sphere_poss, m, h->n_spheres_active*3);
+   cd_mat_add(h->sphere_accs, h->sphere_poss + 2*h->n_spheres_active*3, m, h->n_spheres_active*3);
+   cd_mat_scale(h->sphere_accs, m, h->n_spheres_active*3, 1.0/(h->dt * h->dt));
+      
    return 0;
 }
 
@@ -707,6 +703,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    /* stuff we compute later */
    char trajs_filename[1024];
    int * adofindices;
+   double * traj;
    struct cd_chomp * c;
    struct cost_helper h;
    double * Gjlimit;
@@ -735,6 +732,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    exc = 0;
    
    /* initialize all mallocs to zero */
+   traj = 0;
    c = 0;
    GjlimitAinv = 0;
    Gjlimit = 0;
@@ -882,7 +880,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    /* check that n_adofgoal matches active dof */
    if (adofgoal && (n_dof != n_adofgoal))
    {
-      printf("n_dof: %d; n_adofgoal: %d\n", n_dof, n_adofgoal);
+      RAVELOG_INFO("n_dof: %d; n_adofgoal: %d\n", n_dof, n_adofgoal);
       exc = "size of adofgoal does not match active dofs!";
       goto error;
    }
@@ -966,9 +964,44 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
       cd_kin_pose_invert(h.rsdfs[i].pose_world_gsdf, h.rsdfs[i].pose_gsdf_world);
    }
    
+   /* create the trajectory */
+   traj = (double *) malloc((n_intpoints+2)*n_dof*sizeof(double));
+   
+   /* initialize trajectory */
+   if (starttraj.get())
+   {
+      RAVELOG_INFO("Initializing from a passed trajectory ...\n");
+      for (i=0; i<n_intpoints+2; i++)
+      {
+         std::vector<OpenRAVE::dReal> vec;
+         starttraj->Sample(vec, i*starttraj->GetDuration()/(n_intpoints+1), r->GetActiveConfigurationSpecification());
+         for (j=0; j<n_dof; j++)
+            traj[i*n_dof+j] = vec[j];
+      }
+   }
+   else
+   {
+      std::vector<OpenRAVE::dReal> start;
+      RAVELOG_INFO("Initializing from a straight-line trajectory ...\n");
+      cd_mat_set_zero(traj, n_intpoints+2, n_dof);
+      /* starting point */
+      r->GetActiveDOFValues(start);
+      for (i=0; i<n_intpoints+2; i++)
+         for (j=0; j<n_dof; j++)
+            traj[i*n_dof+j] = start[j] + (adofgoal[j]-start[j])*i/(n_intpoints+1);
+   }
+   
+   h.traj = traj;
+   
+   for (i=0; i<n_intpoints+2; i++)
+      cd_mat_vec_print("traj: ", &traj[i*n_dof], n_dof);
+   
    /* ok, ready to go! create a chomp solver */
-   err = cd_chomp_create(&c, n_dof, n_intpoints, 1);
-   if (err) { free(Gjlimit); free(GjlimitAinv); free(h.J); free(h.J2); free(h.sphere_poss); free(h.sphere_vels); free(h.sphere_accs); free(h.sphere_jacs); free(adofgoal); free(adofindices); free(spheres_active); throw OpenRAVE::openrave_exception("Error creating chomp instance."); }
+   err = cd_chomp_create(&c, n_dof, n_intpoints, 1, &traj[1*n_dof], n_dof);
+   if (err) { exc = "error creating chomp instance!"; goto error; }
+   /* set up trajectory */
+   c->inits[0] = &traj[0*n_dof];
+   c->finals[0] = &traj[(n_intpoints+1)*n_dof];
    /* set up obstacle cost */
    c->cptr = &h;
    c->cost_pre = (int (*)(void *, int, double **))sphere_cost_pre;
@@ -986,38 +1019,6 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
       hmc_resample_iter = 0;
       /*hmc_iters_until_resample = log(cd_util_rand_double(0.0, 1.0)) / hmc_resample_lambda;*/
    
-   /* initialize trajectory */
-   if (starttraj.get())
-   {
-      RAVELOG_INFO("Initializing from a passed trajectory ...\n");
-      for (i=0; i<n_intpoints+2; i++)
-      {
-         std::vector<OpenRAVE::dReal> vec;
-         starttraj->Sample(vec, i*starttraj->GetDuration()/(n_intpoints+1), r->GetActiveConfigurationSpecification());
-         for (j=0; j<n_dof; j++)
-            c->T_ext_points[i][j] = vec[j];
-      }
-   }
-   else
-   {
-      std::vector<OpenRAVE::dReal> vec;
-      double percentage;
-      RAVELOG_INFO("Initializing from a straight-line trajectory ...\n");
-      /* starting point */
-      r->GetActiveDOFValues(vec);
-      for (j=0; j<n_dof; j++)
-         c->T_ext_points[0][j] = vec[j];
-      /* ending point */
-      cd_mat_memcpy(c->T_ext_points[n_intpoints+1], adofgoal, n_dof, 1);
-      /* all points in between */
-      cd_mat_set_zero(&c->T_ext_points[1][0], n_intpoints, n_dof);
-      for (i=1; i<n_intpoints+1; i++)
-      {
-         percentage = 1.0*i/(n_intpoints+1); /* between 0.0 (starting point) to 1.0 (ending point) */
-         cblas_daxpy(n_dof, 1.0-percentage, c->T_ext_points[0],1,             c->T_ext_points[i],1);
-         cblas_daxpy(n_dof,     percentage, c->T_ext_points[n_intpoints+1],1, c->T_ext_points[i],1);
-      }
-   }
    free(adofgoal);
    adofgoal = 0;
    
@@ -1030,18 +1031,18 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
          
          /* yield lower limit */
          old_limit = vec_jlimit_lower[adofindices[j]];
-         for (i=0; i<n_intpoints+2; i++)
-            if (vec_jlimit_lower[adofindices[j]] > c->T_ext_points[i][j])
-               vec_jlimit_lower[adofindices[j]] = c->T_ext_points[i][j];
+         for (i=0; i<n_intpoints; i++)
+            if (vec_jlimit_lower[adofindices[j]] > c->T_points[i][j])
+               vec_jlimit_lower[adofindices[j]] = c->T_points[i][j];
          if (old_limit != vec_jlimit_lower[adofindices[j]])
             RAVELOG_WARN("Adjusting lower limit for joint %d (active %d) from %f to %f!\n",
                adofindices[j], j, old_limit, vec_jlimit_lower[adofindices[j]]);
          
          /* yield upper limit */
          old_limit = vec_jlimit_upper[adofindices[j]];
-         for (i=0; i<n_intpoints+2; i++)
-            if (vec_jlimit_upper[adofindices[j]] < c->T_ext_points[i][j])
-               vec_jlimit_upper[adofindices[j]] = c->T_ext_points[i][j];
+         for (i=0; i<n_intpoints; i++)
+            if (vec_jlimit_upper[adofindices[j]] < c->T_points[i][j])
+               vec_jlimit_upper[adofindices[j]] = c->T_points[i][j];
          if (old_limit != vec_jlimit_upper[adofindices[j]])
             RAVELOG_WARN("Adjusting upper limit for joint %d (active %d) from %f to %f!\n",
                adofindices[j], j, old_limit, vec_jlimit_upper[adofindices[j]]);
@@ -1051,7 +1052,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    /* Initialize CHOMP */
    err = cd_chomp_init(c);
    if (err) { exc = "Error initializing chomp instance."; goto error; }
-   
+
    h.dt = c->dt;
    
    RAVELOG_INFO("iterating CHOMP ...\n");
@@ -1060,7 +1061,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
 #if 0
       /* lambda increases over time */
       c->lambda = 10.0 * exp(0.1 * iter);
-      printf("lambda: %f\n", c->lambda);
+      RAVELOG_INFO("lambda: %f\n", c->lambda);
 #endif
 
       /* resample momentum if using hmc */
@@ -1090,7 +1091,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
          t->Init(r->GetActiveConfigurationSpecification());
          for (i=0; i<n_intpoints+2; i++)
          {
-            std::vector<OpenRAVE::dReal> vec(c->T_ext_points[i], c->T_ext_points[i]+n_dof);
+            std::vector<OpenRAVE::dReal> vec(&traj[i*n_dof], &traj[i*n_dof+n_dof]);
             t->Insert(i, vec);
          }
          std::ofstream f(trajs_filename);
@@ -1101,7 +1102,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
       }
 
       cd_chomp_iterate(c, 1, &cost_total, &cost_obs, &cost_smooth);
-      printf("iter:%2d cost_total:%f cost_obs:%f cost_smooth:%f\n", iter, cost_total, cost_obs, cost_smooth);
+      RAVELOG_INFO("iter:%2d cost_total:%f cost_obs:%f cost_smooth:%f\n", iter, cost_total, cost_obs, cost_smooth);
       
       /* dump stats to data file (note these stats are for trajectory before this iteration) */
       if (fp_dat)
@@ -1175,31 +1176,31 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    }
    
    cd_chomp_iterate(c, 0, &cost_total, &cost_obs, &cost_smooth);
-   printf("iter:%2d cost_total:%f cost_obs:%f cost_smooth:%f [FINAL]\n", iter, cost_total, cost_obs, cost_smooth);
+   RAVELOG_INFO("iter:%2d cost_total:%f cost_obs:%f cost_smooth:%f [FINAL]\n", iter, cost_total, cost_obs, cost_smooth);
    
-   printf("done!\n");
+   RAVELOG_INFO("done!\n");
    
    /*printf("Clock time for %d iterations: %.8f\n", iter, cd_os_timespec_double(&ticks_iterations));*/
-   printf("Time breakdown:\n");
-   printf("  ticks_vels         %.8f\n", cd_os_timespec_double(&c->ticks_vels));
-   printf("  ticks_callback_pre %.8f\n", cd_os_timespec_double(&c->ticks_callback_pre));
-   printf("  ticks_callbacks    %.8f\n", cd_os_timespec_double(&c->ticks_callbacks));
-   printf("    ticks_fk           %.8f\n", cd_os_timespec_double(&h.ticks_fk));
-   printf("    ticks_jacobians    %.8f\n", cd_os_timespec_double(&h.ticks_jacobians));
-   printf("    ticks_selfcol      %.8f\n", cd_os_timespec_double(&h.ticks_selfcol));
-   printf("  ticks_smoothgrad   %.8f\n", cd_os_timespec_double(&c->ticks_smoothgrad));
-   printf("  ticks_smoothcost   %.8f\n", cd_os_timespec_double(&c->ticks_smoothcost));
+   RAVELOG_INFO("Time breakdown:\n");
+   RAVELOG_INFO("  ticks_vels         %.8f\n", cd_os_timespec_double(&c->ticks_vels));
+   RAVELOG_INFO("  ticks_callback_pre %.8f\n", cd_os_timespec_double(&c->ticks_callback_pre));
+   RAVELOG_INFO("  ticks_callbacks    %.8f\n", cd_os_timespec_double(&c->ticks_callbacks));
+   RAVELOG_INFO("    ticks_fk           %.8f\n", cd_os_timespec_double(&h.ticks_fk));
+   RAVELOG_INFO("    ticks_jacobians    %.8f\n", cd_os_timespec_double(&h.ticks_jacobians));
+   RAVELOG_INFO("    ticks_selfcol      %.8f\n", cd_os_timespec_double(&h.ticks_selfcol));
+   RAVELOG_INFO("  ticks_smoothgrad   %.8f\n", cd_os_timespec_double(&c->ticks_smoothgrad));
+   RAVELOG_INFO("  ticks_smoothcost   %.8f\n", cd_os_timespec_double(&c->ticks_smoothcost));
    
    /* create an openrave trajectory from the result, and send to sout */
    t = OpenRAVE::RaveCreateTrajectory(this->e);
    t->Init(r->GetActiveConfigurationSpecification());
    for (i=0; i<n_intpoints+2; i++)
    {
-      std::vector<OpenRAVE::dReal> vec(c->T_ext_points[i], c->T_ext_points[i]+n_dof);
+      std::vector<OpenRAVE::dReal> vec(&traj[i*n_dof], &traj[(i+1)*n_dof]);
       t->Insert(i, vec);
    }
    
-   printf("timing trajectory ...\n");
+   RAVELOG_INFO("timing trajectory ...\n");
 #if OPENRAVE_VERSION >= OPENRAVE_VERSION_COMBINED(0,7,0)
    /* new openrave added a fmaxaccelmult parameter (number 5) */
    OpenRAVE::planningutils::RetimeActiveDOFTrajectory(t,r,false,0.2,0.2,"","");
@@ -1207,8 +1208,8 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    OpenRAVE::planningutils::RetimeActiveDOFTrajectory(t,r,false,0.2,"");
 #endif
 
-   printf("checking trajectory for collision ...\n");
-   {
+   RAVELOG_INFO("checking trajectory for collision ...\n");
+   if (0) {
       double time;
       OpenRAVE::CollisionReportPtr report(new OpenRAVE::CollisionReport());
       for (time=0.0; time<t->GetDuration(); time+=0.01)
@@ -1228,6 +1229,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    
 error:
    if (c) cd_chomp_destroy(c);
+   free(traj);
    free(GjlimitAinv);
    free(Gjlimit);
    free(h.rsdfs);
@@ -1246,7 +1248,7 @@ error:
    if (exc)
       throw OpenRAVE::openrave_exception(exc);
 
-   printf("runchomp done! returning ...\n");
+   RAVELOG_INFO("runchomp done! returning ...\n");
    return 0;
 }
 
