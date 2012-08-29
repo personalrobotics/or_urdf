@@ -43,11 +43,11 @@ def computedistancefield(mod, kinbody=None, cube_extent=None, aabb_padding=None,
    return mod.SendCommand(cmd)
 
 def runchomp(mod, robot=None, adofgoal=None, n_iter=None, max_time=None,
-   lambda_=None, starttraj=None, n_intpoints=None,
+   lambda_=None, starttraj=None, n_points=None, start_tsr=None,
    use_momentum=None, use_hmc=None, hmc_resample_lambda=None, seed=None,
    epsilon=None, epsilon_self=None, obs_factor=None, obs_factor_self=None,
    no_collision_exception=None, no_report_cost=None,
-   dat_filename=None, trajs_fileformstr=None, allowlimadj=None):
+   dat_filename=None, trajs_fileformstr=None):
    cmd = 'runchomp'
    if robot is not None:
       if hasattr(robot,'GetName'):
@@ -65,8 +65,10 @@ def runchomp(mod, robot=None, adofgoal=None, n_iter=None, max_time=None,
    if starttraj is not None:
       in_traj_data = starttraj.serialize(0) # options
       cmd += ' starttraj %s' % shquot(in_traj_data)
-   if n_intpoints is not None:
-      cmd += ' n_intpoints %d' % n_intpoints
+   if n_points is not None:
+      cmd += ' n_points %d' % n_points
+   if start_tsr is not None:
+      cmd += ' start_tsr \'%s\'' % start_tsr.serialize()
    if use_momentum is not None and use_momentum:
       cmd += ' use_momentum'
    if use_hmc is not None and use_hmc:
@@ -91,8 +93,6 @@ def runchomp(mod, robot=None, adofgoal=None, n_iter=None, max_time=None,
       cmd += ' dat_filename %s' % shquot(dat_filename)
    if trajs_fileformstr is not None:
       cmd += ' trajs_fileformstr %s' % shquot(trajs_fileformstr)
-   if allowlimadj is not None and allowlimadj:
-      cmd += ' allowlimadj'
    print 'cmd:', cmd
    out_traj_data = mod.SendCommand(cmd)
    return openravepy.RaveCreateTrajectory(mod.GetEnv(),'').deserialize(out_traj_data)

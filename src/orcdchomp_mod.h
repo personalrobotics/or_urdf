@@ -47,4 +47,16 @@ public:
    int main(const std::string& cmd) { RAVELOG_INFO("module init cmd: %s\n", cmd.c_str()); return 0; }
 };
 
+struct tsr
+{
+   int manipindex;
+   char bodyandlink[32];
+   double T0w[7];
+   double Twe[7];
+   double Bw[6][2];
+};
+
+int tsr_create_parse(struct tsr ** tp, char * str);
+void tsr_destroy(struct tsr * t);
+
 } /* namespace orcdchomp */

@@ -19,6 +19,7 @@ extern "C" {
 #include <libcd/kin.h>
 #include <libcd/mat.h>
 #include <libcd/os.h>
+#include <libcd/spatial.h>
 #include <libcd/util.h>
 #include <libcd/util_shparse.h>
 }
@@ -396,6 +397,8 @@ struct cost_helper_rsdf
 struct cost_helper
 {
    double * traj;
+   int n_points;
+   int m;
    int n; /* config space dimensionality */
    int n_rsdfs;
    struct cost_helper_rsdf * rsdfs;
@@ -406,6 +409,9 @@ struct cost_helper
    struct orcdchomp::sphere ** spheres_active;
    double * J; /* space for the jacobian; 3xn */
    double * J2;
+   struct tsr * start_tsr;
+   int start_tsr_enabled[6]; /* xyzrpy */
+   int start_tsr_k;
    
    double epsilon;
    double epsilon_self;
@@ -414,10 +420,11 @@ struct cost_helper
    
    /* each of these filled by sphere_cost_pre */
    double dt;
-   double * sphere_poss; /* [trajpoint(external)][sphereid][xyz] */
-   double * sphere_vels; /* [trajpoint(internal)][sphereid][3xn] */
-   double * sphere_accs; /* [trajpoint(internal)][sphereid][3xn] */
-   double * sphere_jacs; /* [trajpoint(internal)][sphereid][3xn] */
+   double * sphere_poss_all; /* [trajpoint(external)][sphereid][xyz] */
+   double * sphere_poss; /* [trajpoint(moving)][sphereid][3xn] */
+   double * sphere_vels; /* [trajpoint(moving)][sphereid][3xn] */
+   double * sphere_accs; /* [trajpoint(moving)][sphereid][3xn] */
+   double * sphere_jacs; /* [trajpoint(moving)][sphereid][3xn] */
    
    struct timespec ticks_fk;
    struct timespec ticks_jacobians;
@@ -427,14 +434,16 @@ struct cost_helper
 int sphere_cost_pre(struct cost_helper * h, int m, double ** T_points)
 {
    int ti;
+   int ti_mov;
    int i;
    int j;
    int sai;
    struct orcdchomp::sphere * s;
    boost::multi_array< OpenRAVE::dReal, 2 > orjacobian;
+   double * internal;
    
    /* compute positions of all spheres (including external points) */
-   for (ti=0; ti<m+2; ti++)
+   for (ti=0; ti<h->n_points; ti++)
    {
       /* put the robot in the config */
       std::vector<OpenRAVE::dReal> vec(&h->traj[ti*h->n], &h->traj[(ti+1)*h->n]);
@@ -448,35 +457,57 @@ int sphere_cost_pre(struct cost_helper * h, int m, double ** T_points)
          OpenRAVE::Transform t = h->r->GetLink(s->linkname)->GetTransform();
          OpenRAVE::Vector v = t * OpenRAVE::Vector(s->pos); /* copies 3 values */
          /* save sphere positions */
-         h->sphere_poss[ti*(h->n_spheres_active*3) + sai*3 + 0] = v.x;
-         h->sphere_poss[ti*(h->n_spheres_active*3) + sai*3 + 1] = v.y;
-         h->sphere_poss[ti*(h->n_spheres_active*3) + sai*3 + 2] = v.z;
-         /* compute linear jacobians */
+         h->sphere_poss_all[ti*(h->n_spheres_active*3) + sai*3 + 0] = v.x;
+         h->sphere_poss_all[ti*(h->n_spheres_active*3) + sai*3 + 1] = v.y;
+         h->sphere_poss_all[ti*(h->n_spheres_active*3) + sai*3 + 2] = v.z;
+         /* get the moving point index */
+         if (h->m == h->n_points - 2)
+            ti_mov = ti-1;
+         else
+            ti_mov = ti;
+         /* compute linear jacobians for all moving points */
+         if (ti_mov < 0 || h->m <= ti_mov)
+            continue;
          TIC()
          h->r->CalculateJacobian(s->linkindex, v, orjacobian);
          TOC(&h->ticks_jacobians)
-         if (ti > 0 && ti < m+1)
-         {
-            /* copy the active columns of orjacobian into our J */
-            for (i=0; i<3; i++)
-               for (j=0; j<h->n; j++)
-                  h->sphere_jacs[(ti-1)*h->n_spheres_active*3*h->n + sai*3*h->n + i*h->n+j] = orjacobian[i][h->adofindices[j]];
-         }
+         /* copy the active columns of orjacobian into our J */
+         for (i=0; i<3; i++)
+            for (j=0; j<h->n; j++)
+               h->sphere_jacs[ti_mov*h->n_spheres_active*3*h->n + sai*3*h->n + i*h->n+j] = orjacobian[i][h->adofindices[j]];
       }
    }
    
-   /* compute velocities for all internal points */
-   cd_mat_memcpy(h->sphere_vels, h->sphere_poss + 2*h->n_spheres_active*3, m, h->n_spheres_active*3);
-   cd_mat_sub(h->sphere_vels, h->sphere_poss, m, h->n_spheres_active*3);
-   cd_mat_scale(h->sphere_vels, m, h->n_spheres_active*3, 1.0/h->dt);
+   /* compute velocities for all moving points */
+   /* start my computing internal velocities */
+   internal = h->sphere_vels;
+   if (h->m != h->n_points - 2)
+      internal += h->n_spheres_active*3;
+   cd_mat_memcpy(internal, h->sphere_poss_all + 2*h->n_spheres_active*3, h->n_points-2, h->n_spheres_active*3);
+   cd_mat_sub(internal, h->sphere_poss_all, h->n_points-2, h->n_spheres_active*3);
+   cd_mat_scale(internal, h->n_points-2, h->n_spheres_active*3, 1.0/(2.0*h->dt));
+   /* next do the start vel */
+   if (h->m != h->n_points - 2)
+   {
+      cd_mat_memcpy(h->sphere_vels, h->sphere_poss + h->n_spheres_active*3, 1, h->n_spheres_active*3);
+      cd_mat_sub(h->sphere_vels, h->sphere_poss, 1, h->n_spheres_active*3);
+      cd_mat_scale(h->sphere_vels, 1, h->n_spheres_active*3, 1.0/(h->dt));
+   }
    
-   /* compute accelerations for all internal points */
-   cd_mat_memcpy(h->sphere_accs, h->sphere_poss + h->n_spheres_active*3, m, h->n_spheres_active*3);
-   cd_mat_scale(h->sphere_accs, m, h->n_spheres_active*3, -2.0);
-   cd_mat_add(h->sphere_accs, h->sphere_poss, m, h->n_spheres_active*3);
-   cd_mat_add(h->sphere_accs, h->sphere_poss + 2*h->n_spheres_active*3, m, h->n_spheres_active*3);
-   cd_mat_scale(h->sphere_accs, m, h->n_spheres_active*3, 1.0/(h->dt * h->dt));
-      
+   /* compute accelerations for all moving points */
+   /* start my computing internal accelerations */
+   internal = h->sphere_accs;
+   if (h->m != h->n_points - 2)
+      internal += h->n_spheres_active*3;
+   cd_mat_memcpy(internal, h->sphere_poss + h->n_spheres_active*3, h->n_points-2, h->n_spheres_active*3);
+   cd_mat_scale(internal, h->n_points-2, h->n_spheres_active*3, -2.0);
+   cd_mat_add(internal, h->sphere_poss, h->n_points-2, h->n_spheres_active*3);
+   cd_mat_add(internal, h->sphere_poss + 2*h->n_spheres_active*3, h->n_points-2, h->n_spheres_active*3);
+   cd_mat_scale(internal, h->n_points-2, h->n_spheres_active*3, 1.0/(h->dt * h->dt));
+   /* simply copy 1st accel into the 0th accel for now */
+   if (h->m != h->n_points - 2)
+      cd_mat_memcpy(h->sphere_accs, h->sphere_accs + h->n_spheres_active*3, 1, h->n_spheres_active*3);
+   
    return 0;
 }
 
@@ -524,7 +555,7 @@ int sphere_cost(struct cost_helper * h, int ti, double * c_point, double * c_vel
       {
          /* transform sphere center into grid frame */
          cd_kin_pose_compos(h->rsdfs[i].pose_gsdf_world,
-            h->sphere_poss + (ti+1)*(h->n_spheres_active*3) + sai*3,
+            h->sphere_poss + ti*(h->n_spheres_active*3) + sai*3,
             g_point);
          /* get sdf value (from interp) */
          err = cd_grid_double_interp(h->rsdfs[i].grid, g_point, &dist);
@@ -545,7 +576,7 @@ int sphere_cost(struct cost_helper * h, int ti, double * c_point, double * c_vel
 
       /* transform sphere center into grid frame */
       cd_kin_pose_compos(h->rsdfs[sdfi_best].pose_gsdf_world,
-         h->sphere_poss + (ti+1)*(h->n_spheres_active*3) + sai*3,
+         h->sphere_poss + ti*(h->n_spheres_active*3) + sai*3,
          g_point);
       /* get sdf value (from interp) */
       cd_grid_double_interp(h->rsdfs[sdfi_best].grid, g_point, &dist);
@@ -607,8 +638,8 @@ int sphere_cost(struct cost_helper * h, int ti, double * c_point, double * c_vel
          if (s->linkindex == s2->linkindex) continue;
          
          /* skip spheres far enough away from us */
-         cd_mat_memcpy(v_from_other, h->sphere_poss + (ti+1)*(h->n_spheres_active*3) + sai*3, 3, 1);
-         cd_mat_sub(v_from_other, h->sphere_poss + (ti+1)*(h->n_spheres_active*3) + sai2*3, 3, 1);
+         cd_mat_memcpy(v_from_other, h->sphere_poss + ti*(h->n_spheres_active*3) + sai*3, 3, 1);
+         cd_mat_sub(v_from_other, h->sphere_poss + ti*(h->n_spheres_active*3) + sai2*3, 3, 1);
          dist = cblas_dnrm2(3, v_from_other,1);
          if (dist > s->radius + s2->radius + h->epsilon_self) continue;
          
@@ -667,6 +698,116 @@ int sphere_cost(struct cost_helper * h, int ti, double * c_point, double * c_vel
    return 0;
 }
 
+int con_start_tsr(struct cost_helper * h, int ti, double * point, double * con_val, double * con_jacobian)
+{
+   int tsri;
+   int ki;
+   int i;
+   int j;
+   double pose_ee[7];
+   double pose_obj[7];
+   double pose_ee_obj[7];
+   double pose_table_world[7];
+   double pose_table_obj[7];
+   double xyzypr_table_obj[7];
+   
+   double * spajac_world;
+   int ee_link_index;
+   boost::multi_array< OpenRAVE::dReal, 2 > orjacobian;
+   double xm_table_world[6][6];
+   double jac_inverse[7][6];
+   double pose_to_xyzypr_jac[6][7];
+   double * full_result;
+   double temp6x6a[6][6];
+   double temp6x6b[6][6];
+   
+   /* put the arm in this configuration */
+   std::vector<OpenRAVE::dReal> vec(point, point+h->n);
+   h->r->SetActiveDOFValues(vec);
+   
+   /* get the end-effector transform */
+   OpenRAVE::Transform t = h->r->GetActiveManipulator()->GetEndEffectorTransform();
+   pose_ee[0] = t.trans.x;
+   pose_ee[1] = t.trans.y;
+   pose_ee[2] = t.trans.z;
+   pose_ee[3] = t.rot.y;
+   pose_ee[4] = t.rot.z;
+   pose_ee[5] = t.rot.w;
+   pose_ee[6] = t.rot.x;
+   
+   /* get the object pose */
+   cd_kin_pose_invert(h->start_tsr->Twe, pose_ee_obj);
+   cd_kin_pose_compose(pose_ee, pose_ee_obj, pose_obj);
+   
+   /* get the pose of the world w.r.t. the table */
+   cd_kin_pose_invert(h->start_tsr->T0w, pose_table_world);
+   
+   /* get the pose of the object w.r.t. the table */
+   cd_kin_pose_compose(pose_table_world, pose_obj, pose_table_obj);
+   
+   /* convert to xyzypr */
+   cd_kin_pose_to_xyzypr(pose_table_obj, xyzypr_table_obj);
+   
+   /* fill the constraint value vector */
+   ki=0;
+   for (tsri=0; tsri<6; tsri++) if (h->start_tsr_enabled[tsri])
+   {
+      con_val[ki] = xyzypr_table_obj[tsri<3?tsri:8-tsri];
+      ki++;
+   }
+   
+   if (con_jacobian)
+   {
+      /* compute the spatial Jacobian! */
+      spajac_world = (double *) malloc(6 * h->n * sizeof(double));
+      full_result = (double *) malloc(6 * h->n * sizeof(double));
+      
+      ee_link_index = h->r->GetActiveManipulator()->GetEndEffector()->GetIndex();
+      
+      /* copy the active columns of (rotational) orjacobian into our J */
+      h->r->CalculateAngularVelocityJacobian(ee_link_index, orjacobian);
+      for (i=0; i<3; i++)
+         for (j=0; j<h->n; j++)
+            spajac_world[i*h->n+j] = orjacobian[i][h->adofindices[j]];
+      
+      /* copy the active columns of (translational) orjacobian into our J */
+      h->r->CalculateJacobian(ee_link_index, OpenRAVE::Vector(0.0, 0.0, 0.0), orjacobian);
+      for (i=0; i<3; i++)
+         for (j=0; j<h->n; j++)
+            spajac_world[(3+i)*h->n+j] = orjacobian[i][h->adofindices[j]];
+            
+      /* compute the spatial transform to get velocities in table frame */
+      cd_spatial_xm_from_pose(xm_table_world, pose_table_world);
+      
+      /* calculate the pose derivative Jacobian matrix */
+      cd_spatial_pose_jac_inverse(pose_table_obj, jac_inverse);
+      
+      /* calculate the xyzypr Jacobian matrix */
+      cd_kin_pose_to_xyzypr_J(pose_table_obj, pose_to_xyzypr_jac);
+      
+      /* do the matrix multiplications! */
+      cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 6, 6, 7,
+         1.0, *pose_to_xyzypr_jac,7, *jac_inverse,6, 0.0, *temp6x6a,6);
+      cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 6, 6, 6,
+         1.0, *temp6x6a,6, *xm_table_world,6, 0.0, *temp6x6b,6);
+      cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 6, h->n, 6,
+         1.0, *temp6x6b,6, spajac_world,h->n, 0.0, full_result,h->n);
+      
+      /* fill the constraint Jacbobian matrix */
+      ki=0;
+      for (tsri=0; tsri<6; tsri++) if (h->start_tsr_enabled[tsri])
+      {
+         cd_mat_memcpy(con_jacobian+ki*h->n, full_result+(tsri<3?tsri:8-tsri)*h->n, 1, h->n);
+         ki++;
+      }
+      
+      free(spajac_world);
+      free(full_result);
+   }
+   
+   return 0;
+}
+
 /* runchomp robot Herb2
  * run chomp from the current config to the passed goal config
  * uses the active dofs of the passed robot
@@ -687,7 +828,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    int n_iter;
    double max_time;
    double lambda;
-   int n_intpoints;
+   int n_points; /* points, including endpoints if any */
    int use_momentum;
    int use_hmc;
    double hmc_resample_lambda;
@@ -699,11 +840,9 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    int no_collision_exception;
    char * dat_filename;
    char * trajs_fileformstr;
-   int allowlimadj;
    /* stuff we compute later */
    char trajs_filename[1024];
    int * adofindices;
-   double * traj;
    struct cd_chomp * c;
    struct cost_helper h;
    double * Gjlimit;
@@ -732,14 +871,14 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    exc = 0;
    
    /* initialize all mallocs to zero */
-   traj = 0;
    c = 0;
    GjlimitAinv = 0;
    Gjlimit = 0;
+   h.traj = 0;
    h.rsdfs = 0;
    h.J = 0;
    h.J2 = 0;
-   h.sphere_poss = 0;
+   h.sphere_poss_all = 0;
    h.sphere_vels = 0;
    h.sphere_accs = 0;
    h.sphere_jacs = 0;
@@ -752,12 +891,12 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    lockenv = OpenRAVE::EnvironmentMutex::scoped_lock(this->e->GetMutex());
    
    /* default parameters */
-   /*r = 0;*/
    adofgoal = 0;
+   h.start_tsr = 0;
    n_iter = 10;
    max_time = HUGE_VAL;
    lambda = 10.0;
-   n_intpoints = 99;
+   n_points = 101;
    use_momentum = 0;
    use_hmc = 0;
    hmc_resample_lambda = 0.02; /* parameter of exponential distribution over iterations between resamples */
@@ -769,7 +908,6 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    no_collision_exception = 0;
    dat_filename = 0;
    trajs_fileformstr = 0;
-   allowlimadj = 0;
    
    /* parse command line arguments */
    for (i=1; i<argc; i++)
@@ -794,6 +932,11 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
          }
          cd_mat_vec_print("parsed adofgoal: ", adofgoal, n_adofgoal);
       }
+      else if (strcmp(argv[i],"start_tsr")==0 && i+1<argc)
+      {
+         err = tsr_create_parse(&h.start_tsr, argv[++i]);
+         if (err) { exc = "Cannot parse TSR!"; goto error; }
+      }
       else if (strcmp(argv[i],"n_iter")==0 && i+1<argc)
          n_iter = atoi(argv[++i]);
       else if (strcmp(argv[i],"lambda")==0 && i+1<argc)
@@ -809,8 +952,8 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
          std::istringstream ser_iss(my_string);
          starttraj->deserialize(ser_iss);
       }
-      else if (strcmp(argv[i],"n_intpoints")==0 && i+1<argc)
-         n_intpoints = atoi(argv[++i]);
+      else if (strcmp(argv[i],"n_points")==0 && i+1<argc)
+         n_points = atoi(argv[++i]);
       else if (strcmp(argv[i],"use_momentum")==0)
          use_momentum = 1;
       else if (strcmp(argv[i],"use_hmc")==0)
@@ -833,8 +976,6 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
          dat_filename = argv[++i];
       else if (strcmp(argv[i],"trajs_fileformstr")==0 && i+1<argc)
          trajs_fileformstr = argv[++i];
-      else if (strcmp(argv[i],"allowlimadj")==0)
-         allowlimadj = 1;
       else break;
    }
    if (i<argc)
@@ -853,7 +994,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    if (!this->n_sdfs) { exc = "No signed distance fields have yet been computed!"; goto error; }
    if (n_iter < 0) { exc = "n_iter must be >=0!"; goto error; }
    if (lambda < 0.01) { exc = "lambda must be >=0.01!"; goto error; }
-   if (n_intpoints < 1) { exc = "n_intpoints must be >=1!"; goto error; }
+   if (n_points < 3) { exc = "n_points must be >=3!"; goto error; }
    
    /* ensure the robot has spheres defined */
    {
@@ -885,27 +1026,6 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
       goto error;
    }
    
-   /* allocate rng */
-   rng = gsl_rng_alloc(gsl_rng_default);
-   gsl_rng_set(rng, seed);
-   
-   if (dat_filename)
-   {
-      fp_dat = fopen(dat_filename, "w");
-      if (!fp_dat) { exc = "could not open dat_filename file for writing!"; goto error; }
-   }
-   
-   /* OK, input arguments are parsed. Start timing! */
-   CD_OS_TIMESPEC_SET_ZERO(&ticks);
-   clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ticks_tic);
-   
-   /* check that starttraj has the right ConfigurationSpecification? */
-   
-   /* get joint limits */
-   Gjlimit = (double *) malloc(n_intpoints * n_dof * sizeof(double));
-   GjlimitAinv = (double *) malloc(n_intpoints * n_dof * sizeof(double));
-   r->GetDOFLimits(vec_jlimit_lower, vec_jlimit_upper);
-   
    /* (re-)compute sphere link indices */
    for (s=spheres_all; s; s=s->next)
       s->linkindex = r->GetLink(s->linkname)->GetIndex();
@@ -925,7 +1045,26 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
       n_spheres_active++;
    }
    
+   /* allocate rng */
+   rng = gsl_rng_alloc(gsl_rng_default);
+   gsl_rng_set(rng, seed);
+   
+   if (dat_filename)
+   {
+      fp_dat = fopen(dat_filename, "w");
+      if (!fp_dat) { exc = "could not open dat_filename file for writing!"; goto error; }
+   }
+   
+   /* OK, input arguments are parsed. Start timing! */
+   CD_OS_TIMESPEC_SET_ZERO(&ticks);
+   clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ticks_tic);
+   
+   /* check that starttraj has the right ConfigurationSpecification? */
+   
    /* initialize the cost helper */
+   h.n_points = n_points;
+   h.m = n_points-2;
+   if (h.start_tsr) h.m++;
    h.n = n_dof;
    h.r = r.get();
    h.spheres_all = spheres_all;
@@ -941,10 +1080,14 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    cd_os_timespec_set_zero(&h.ticks_jacobians);
    cd_os_timespec_set_zero(&h.ticks_fk);
    cd_os_timespec_set_zero(&h.ticks_selfcol);
-   h.sphere_poss = (double *) malloc((n_intpoints+2)*n_spheres_active*3*sizeof(double));
-   h.sphere_vels = (double *) malloc((n_intpoints)*n_spheres_active*3*sizeof(double));
-   h.sphere_accs = (double *) malloc((n_intpoints)*n_spheres_active*3*sizeof(double));
-   h.sphere_jacs = (double *) malloc((n_intpoints)*n_spheres_active*(3*n_dof)*sizeof(double));
+   h.sphere_poss_all = (double *) malloc((n_points)*n_spheres_active*3*sizeof(double));
+   if (h.start_tsr)
+      h.sphere_poss = h.sphere_poss_all;
+   else
+      h.sphere_poss = h.sphere_poss_all + n_spheres_active*3;
+   h.sphere_vels = (double *) malloc((h.m)*n_spheres_active*3*sizeof(double));
+   h.sphere_accs = (double *) malloc((h.m)*n_spheres_active*3*sizeof(double));
+   h.sphere_jacs = (double *) malloc((h.m)*n_spheres_active*(3*n_dof)*sizeof(double));
    
    /* compute the rooted sdfs ... */
    h.n_rsdfs = this->n_sdfs;
@@ -964,44 +1107,81 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
       cd_kin_pose_invert(h.rsdfs[i].pose_world_gsdf, h.rsdfs[i].pose_gsdf_world);
    }
    
+   /* get joint limit stuff (allocated for all moving points) */
+   Gjlimit = (double *) malloc(h.m * n_dof * sizeof(double));
+   GjlimitAinv = (double *) malloc(h.m * n_dof * sizeof(double));
+   r->GetDOFLimits(vec_jlimit_lower, vec_jlimit_upper);
+   
    /* create the trajectory */
-   traj = (double *) malloc((n_intpoints+2)*n_dof*sizeof(double));
+   h.traj = (double *) malloc(n_points*n_dof*sizeof(double));
    
    /* initialize trajectory */
    if (starttraj.get())
    {
       RAVELOG_INFO("Initializing from a passed trajectory ...\n");
-      for (i=0; i<n_intpoints+2; i++)
+      for (i=0; i<n_points; i++)
       {
          std::vector<OpenRAVE::dReal> vec;
-         starttraj->Sample(vec, i*starttraj->GetDuration()/(n_intpoints+1), r->GetActiveConfigurationSpecification());
+         starttraj->Sample(vec, i*starttraj->GetDuration()/(n_points-1), r->GetActiveConfigurationSpecification());
          for (j=0; j<n_dof; j++)
-            traj[i*n_dof+j] = vec[j];
+            h.traj[i*n_dof+j] = vec[j];
       }
    }
    else
    {
       std::vector<OpenRAVE::dReal> start;
       RAVELOG_INFO("Initializing from a straight-line trajectory ...\n");
-      cd_mat_set_zero(traj, n_intpoints+2, n_dof);
+      cd_mat_set_zero(h.traj, n_points, n_dof);
       /* starting point */
       r->GetActiveDOFValues(start);
-      for (i=0; i<n_intpoints+2; i++)
+      for (i=0; i<n_points; i++)
          for (j=0; j<n_dof; j++)
-            traj[i*n_dof+j] = start[j] + (adofgoal[j]-start[j])*i/(n_intpoints+1);
+            h.traj[i*n_dof+j] = start[j] + (adofgoal[j]-start[j])*i/(n_points-1);
+   }
+      
+   /* calculate the dimensionality of the constraint */
+   if (h.start_tsr)
+   {
+      printf("start_tsr");
+      h.start_tsr_k = 0;
+      for (i=0; i<6; i++)
+      {
+         if (h.start_tsr->Bw[i][0] == 0.0 && h.start_tsr->Bw[i][1] == 0.0)
+         {
+            h.start_tsr_enabled[i] = 1;
+            h.start_tsr_k++;
+         }
+         else
+            h.start_tsr_enabled[i] = 0;
+         printf(" %d", h.start_tsr_enabled[i]);
+      }
+      printf("\n");
    }
    
-   h.traj = traj;
-   
-   for (i=0; i<n_intpoints+2; i++)
-      cd_mat_vec_print("traj: ", &traj[i*n_dof], n_dof);
+   /* evaluate the constraint on the start and end points */
+   if (h.start_tsr)
+   {
+      double * con_val;
+      con_val = (double *) malloc(h.start_tsr_k * sizeof(double));
+      printf("evaluating constraint on first point ...\n");
+      con_start_tsr(&h, 0, h.traj, con_val, 0);
+      cd_mat_vec_print("con_val: ", con_val, h.start_tsr_k);
+      free(con_val);
+   }
    
    /* ok, ready to go! create a chomp solver */
-   err = cd_chomp_create(&c, n_dof, n_intpoints, 1, &traj[1*n_dof], n_dof);
+   err = cd_chomp_create(&c, n_dof, h.m, 1, &h.traj[(h.start_tsr?0:1)*n_dof], n_dof);
    if (err) { exc = "error creating chomp instance!"; goto error; }
    /* set up trajectory */
-   c->inits[0] = &traj[0*n_dof];
-   c->finals[0] = &traj[(n_intpoints+1)*n_dof];
+   if (h.start_tsr)
+   {
+      c->inits[0] = 0;
+      cd_chomp_add_constraint(c, h.start_tsr_k, 0, &h,
+      (int (*)(void * cptr, int i, double * point, double * con_val, double * con_jacobian))con_start_tsr);
+   }
+   else
+      c->inits[0] = &h.traj[0*n_dof];
+   c->finals[0] = &h.traj[(n_points-1)*n_dof];
    /* set up obstacle cost */
    c->cptr = &h;
    c->cost_pre = (int (*)(void *, int, double **))sphere_cost_pre;
@@ -1021,33 +1201,6 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    
    free(adofgoal);
    adofgoal = 0;
-   
-   /* if allowlimadj was passed, tweak the limits to include the starting trajectory! */
-   if (allowlimadj)
-   {
-      for (j=0; j<n_dof; j++)
-      {
-         double old_limit;
-         
-         /* yield lower limit */
-         old_limit = vec_jlimit_lower[adofindices[j]];
-         for (i=0; i<n_intpoints; i++)
-            if (vec_jlimit_lower[adofindices[j]] > c->T_points[i][j])
-               vec_jlimit_lower[adofindices[j]] = c->T_points[i][j];
-         if (old_limit != vec_jlimit_lower[adofindices[j]])
-            RAVELOG_WARN("Adjusting lower limit for joint %d (active %d) from %f to %f!\n",
-               adofindices[j], j, old_limit, vec_jlimit_lower[adofindices[j]]);
-         
-         /* yield upper limit */
-         old_limit = vec_jlimit_upper[adofindices[j]];
-         for (i=0; i<n_intpoints; i++)
-            if (vec_jlimit_upper[adofindices[j]] < c->T_points[i][j])
-               vec_jlimit_upper[adofindices[j]] = c->T_points[i][j];
-         if (old_limit != vec_jlimit_upper[adofindices[j]])
-            RAVELOG_WARN("Adjusting upper limit for joint %d (active %d) from %f to %f!\n",
-               adofindices[j], j, old_limit, vec_jlimit_upper[adofindices[j]]);
-      }
-   }
    
    /* Initialize CHOMP */
    err = cd_chomp_init(c);
@@ -1079,7 +1232,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
          /* set new resampling iter */
          hmc_resample_iter += 1 + (int) (- log(gsl_rng_uniform(rng)) / hmc_resample_lambda);
       }
-
+      
       /* dump the intermediate trajectory before each iteration */
       if (trajs_fileformstr)
       {
@@ -1089,9 +1242,9 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
          sprintf(trajs_filename, trajs_fileformstr, iter);
          t = OpenRAVE::RaveCreateTrajectory(this->e);
          t->Init(r->GetActiveConfigurationSpecification());
-         for (i=0; i<n_intpoints+2; i++)
+         for (i=0; i<n_points; i++)
          {
-            std::vector<OpenRAVE::dReal> vec(&traj[i*n_dof], &traj[i*n_dof+n_dof]);
+            std::vector<OpenRAVE::dReal> vec(&h.traj[i*n_dof], &h.traj[i*n_dof+n_dof]);
             t->Insert(i, vec);
          }
          std::ofstream f(trajs_filename);
@@ -1194,9 +1347,9 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    /* create an openrave trajectory from the result, and send to sout */
    t = OpenRAVE::RaveCreateTrajectory(this->e);
    t->Init(r->GetActiveConfigurationSpecification());
-   for (i=0; i<n_intpoints+2; i++)
+   for (i=0; i<n_points; i++)
    {
-      std::vector<OpenRAVE::dReal> vec(&traj[i*n_dof], &traj[(i+1)*n_dof]);
+      std::vector<OpenRAVE::dReal> vec(&h.traj[i*n_dof], &h.traj[(i+1)*n_dof]);
       t->Insert(i, vec);
    }
    
@@ -1209,7 +1362,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
 #endif
 
    RAVELOG_INFO("checking trajectory for collision ...\n");
-   if (0) {
+   {
       double time;
       OpenRAVE::CollisionReportPtr report(new OpenRAVE::CollisionReport());
       for (time=0.0; time<t->GetDuration(); time+=0.01)
@@ -1229,19 +1382,20 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    
 error:
    if (c) cd_chomp_destroy(c);
-   free(traj);
    free(GjlimitAinv);
    free(Gjlimit);
+   free(h.traj);
    free(h.rsdfs);
    free(h.J);
    free(h.J2);
-   free(h.sphere_poss);
+   free(h.sphere_poss_all);
    free(h.sphere_vels);
    free(h.sphere_accs);
    free(h.sphere_jacs);
    free(adofindices);
    free(spheres_active);
    free(adofgoal);
+   if (h.start_tsr) tsr_destroy(h.start_tsr);
    if (rng) gsl_rng_free(rng);
    if (fp_dat) fclose(fp_dat);
    
@@ -1250,6 +1404,55 @@ error:
 
    RAVELOG_INFO("runchomp done! returning ...\n");
    return 0;
+}
+
+int tsr_create_parse(struct tsr ** tp, char * str)
+{
+   int ret;
+   struct tsr * t;
+   double AR[3][3];
+   double Ad[3];
+   double BR[3][3];
+   double Bd[3];
+   
+   t = (struct tsr *) malloc(sizeof(struct tsr));
+   if (!t) return -1;
+   
+   ret = sscanf(str,
+      "%d %31s"
+      " %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf"
+      " %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf"
+      " %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf",
+      &t->manipindex,
+      t->bodyandlink,
+      &AR[0][0], &AR[1][0], &AR[2][0],
+      &AR[0][1], &AR[1][1], &AR[2][1],
+      &AR[0][2], &AR[1][2], &AR[2][2],
+      &Ad[0], &Ad[1], &Ad[2],
+      &BR[0][0], &BR[1][0], &BR[2][0],
+      &BR[0][1], &BR[1][1], &BR[2][1],
+      &BR[0][2], &BR[1][2], &BR[2][2],
+      &Bd[0], &Bd[1], &Bd[2],
+      &t->Bw[0][0], &t->Bw[0][1],
+      &t->Bw[1][0], &t->Bw[1][1],
+      &t->Bw[2][0], &t->Bw[2][1],
+      &t->Bw[3][0], &t->Bw[3][1],
+      &t->Bw[4][0], &t->Bw[4][1],
+      &t->Bw[5][0], &t->Bw[5][1]);
+   if (ret != 38) { free(t); return -2; }
+   
+   /* Convert from dr to pose */
+   cd_kin_pose_from_dR(t->T0w, Ad, AR);
+   
+   cd_kin_pose_from_dR(t->Twe, Bd, BR);
+   
+   *tp = t;
+   return 0;
+}
+
+void tsr_destroy(struct tsr * t)
+{
+   free(t);
 }
 
 } /* namespace orcdchomp */
