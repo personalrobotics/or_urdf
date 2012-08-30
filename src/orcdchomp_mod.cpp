@@ -694,6 +694,10 @@ int sphere_cost(struct cost_helper * h, int ti, double * c_point, double * c_vel
       cost += cost_sphere;
    }
    
+   /* we potentially add the ee_force cost and its gradient ... */
+   
+   
+   
    if (costp) *costp = cost;
    return 0;
 }
@@ -838,8 +842,13 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    double obs_factor;
    double obs_factor_self;
    int no_collision_exception;
+   int no_collision_details;
    char * dat_filename;
    char * trajs_fileformstr;
+   double ee_force[3];
+   double ee_force_at[3];
+   double * ee_torque_weights;
+   int ee_torque_weights_n;
    /* stuff we compute later */
    char trajs_filename[1024];
    int * adofindices;
@@ -906,8 +915,13 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    obs_factor = 200.0;
    obs_factor_self = 10.0;
    no_collision_exception = 0;
+   no_collision_details = 0;
    dat_filename = 0;
    trajs_fileformstr = 0;
+   cd_mat_set_zero(ee_force, 3, 1);
+   cd_mat_set_zero(ee_force_at, 3, 1);
+   ee_torque_weights = 0;
+   ee_torque_weights_n = 0;
    
    /* parse command line arguments */
    for (i=1; i<argc; i++)
@@ -972,10 +986,54 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
          obs_factor_self = atof(argv[++i]);
       else if (strcmp(argv[i],"no_collision_exception")==0)
          no_collision_exception = 1;
+      else if (strcmp(argv[i],"no_collision_details")==0)
+         no_collision_details = 1;
       else if (strcmp(argv[i],"dat_filename")==0 && i+1<argc)
          dat_filename = argv[++i];
       else if (strcmp(argv[i],"trajs_fileformstr")==0 && i+1<argc)
          trajs_fileformstr = argv[++i];
+      else if (strcmp(argv[i],"ee_force")==0 && i+1<argc)
+      {
+         int ee_force_argc;
+         char ** ee_force_argv;
+         cd_util_shparse(argv[++i], &ee_force_argc, &ee_force_argv);
+         if (ee_force_argc == 1)
+         {
+            ee_force[0] = 0.0;
+            ee_force[1] = 0.0;
+            ee_force[2] = -atof(ee_force_argv[0]);
+         }
+         else if (ee_force_argc == 3)
+         {
+            ee_force[0] = atof(ee_force_argv[0]);
+            ee_force[1] = atof(ee_force_argv[1]);
+            ee_force[2] = atof(ee_force_argv[2]);
+         }
+         else
+            { exc = "ee_force must be length 1 or 3!"; goto error; }
+      }
+      else if (strcmp(argv[i],"ee_force_at")==0 && i+1<argc)
+      {
+         int ee_force_at_argc;
+         char ** ee_force_at_argv;
+         cd_util_shparse(argv[++i], &ee_force_at_argc, &ee_force_at_argv);
+         if (ee_force_at_argc != 3)
+            { exc = "ee_force_at must be length 3!"; goto error; }
+         ee_force_at[0] = atof(ee_force_at_argv[0]);
+         ee_force_at[1] = atof(ee_force_at_argv[1]);
+         ee_force_at[2] = atof(ee_force_at_argv[2]);
+      }
+      else if (strcmp(argv[i],"ee_torque_weights")==0 && i+1<argc)
+      {
+         char ** my_argv;
+         if (ee_torque_weights) { exc = "Only one ee_torque_weights can be passed!"; goto error; }
+         cd_util_shparse(argv[++i], &ee_torque_weights_n, &my_argv);
+         ee_torque_weights = (double *) malloc(ee_torque_weights_n * sizeof(double));
+         for (j=0; j<ee_torque_weights_n; j++)
+            ee_torque_weights[j] = atof(my_argv[j]);
+         free(my_argv);
+         cd_mat_vec_print("parsed ee_torque_weights: ", ee_torque_weights, ee_torque_weights_n);
+      }
       else break;
    }
    if (i<argc)
@@ -996,14 +1054,23 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    if (lambda < 0.01) { exc = "lambda must be >=0.01!"; goto error; }
    if (n_points < 3) { exc = "n_points must be >=3!"; goto error; }
    
-   /* ensure the robot has spheres defined */
+   n_dof = r->GetActiveDOF();
+   
+   /* check that n_adofgoal matches active dof */
+   if (adofgoal && (n_dof != n_adofgoal))
    {
-      boost::shared_ptr<orcdchomp::rdata> d = boost::dynamic_pointer_cast<orcdchomp::rdata>(r->GetReadableInterface("orcdchomp"));
-      if (!d) { exc = "robot does not have a <orcdchomp> tag defined!"; goto error; }
-      spheres_all = d->spheres;
+      RAVELOG_INFO("n_dof: %d; n_adofgoal: %d\n", n_dof, n_adofgoal);
+      exc = "size of adofgoal does not match active dofs!";
+      goto error;
    }
    
-   n_dof = r->GetActiveDOF();
+   /* check that ee_torque_weights_n matches */
+   if (ee_torque_weights && (ee_torque_weights_n != n_dof))
+   {
+      RAVELOG_INFO("n_dof: %d; ee_torque_weights_n: %d\n", n_dof, ee_torque_weights_n);
+      exc = "size of ee_torque_weights does not match active dofs!";
+      goto error;
+   }
    
    /* allocate adofindices */
    adofindices = (int *) malloc(n_dof * sizeof(int));
@@ -1018,12 +1085,22 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
       printf("\n");
    }
    
-   /* check that n_adofgoal matches active dof */
-   if (adofgoal && (n_dof != n_adofgoal))
+   /* ensure that if we're doing the ee_force math, the active dofs are
+    * only revolute dofs (since we do our own jacobian math) */
+   if (ee_torque_weights)
    {
-      RAVELOG_INFO("n_dof: %d; n_adofgoal: %d\n", n_dof, n_adofgoal);
-      exc = "size of adofgoal does not match active dofs!";
-      goto error;
+      printf("ee_torque_weights check for revolute only ...\n");
+      for (i=0; i<n_dof; i++)
+      {
+         printf("joint type: %d\n", r->GetJointFromDOFIndex(adofindices[i])->GetType());
+      }
+   }
+   
+   /* ensure the robot has spheres defined */
+   {
+      boost::shared_ptr<orcdchomp::rdata> d = boost::dynamic_pointer_cast<orcdchomp::rdata>(r->GetReadableInterface("orcdchomp"));
+      if (!d) { exc = "robot does not have a <orcdchomp> tag defined!"; goto error; }
+      spheres_all = d->spheres;
    }
    
    /* (re-)compute sphere link indices */
@@ -1173,6 +1250,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    err = cd_chomp_create(&c, n_dof, h.m, 1, &h.traj[(h.start_tsr?0:1)*n_dof], n_dof);
    if (err) { exc = "error creating chomp instance!"; goto error; }
    /* set up trajectory */
+   c->dt = 1.0/(n_points-1);
    if (h.start_tsr)
    {
       c->inits[0] = 0;
@@ -1314,9 +1392,11 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
          
          num_limadjs++;
          if (num_limadjs == 100)
-            return -1;
-      }
-      }
+         {
+            printf("ran too many joint limit fixes! aborting ...\n");
+            abort();
+         }
+      }}
       
       /* quit if we're over time! */
       {
@@ -1360,9 +1440,9 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
 #else
    OpenRAVE::planningutils::RetimeActiveDOFTrajectory(t,r,false,0.2,"");
 #endif
-
    RAVELOG_INFO("checking trajectory for collision ...\n");
    {
+      int collides = 0;
       double time;
       OpenRAVE::CollisionReportPtr report(new OpenRAVE::CollisionReport());
       for (time=0.0; time<t->GetDuration(); time+=0.01)
@@ -1372,10 +1452,13 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
          r->SetActiveDOFValues(point);
          if (this->e->CheckCollision(r,report))
          {
-            RAVELOG_ERROR("Collision: %s\n", report->__str__().c_str());
+            collides = 1;
+            if (!no_collision_details) RAVELOG_ERROR("Collision: %s\n", report->__str__().c_str());
             if (!no_collision_exception) { exc = "Resulting trajectory is in collision!"; goto error; }
          }
       }
+      if (collides)
+         RAVELOG_ERROR("   trajectory collides!\n");
    }
    
    t->serialize(sout);
@@ -1395,6 +1478,7 @@ error:
    free(adofindices);
    free(spheres_active);
    free(adofgoal);
+   free(ee_torque_weights);
    if (h.start_tsr) tsr_destroy(h.start_tsr);
    if (rng) gsl_rng_free(rng);
    if (fp_dat) fclose(fp_dat);

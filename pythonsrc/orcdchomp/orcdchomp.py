@@ -46,8 +46,8 @@ def runchomp(mod, robot=None, adofgoal=None, n_iter=None, max_time=None,
    lambda_=None, starttraj=None, n_points=None, start_tsr=None,
    use_momentum=None, use_hmc=None, hmc_resample_lambda=None, seed=None,
    epsilon=None, epsilon_self=None, obs_factor=None, obs_factor_self=None,
-   no_collision_exception=None, no_report_cost=None,
-   dat_filename=None, trajs_fileformstr=None):
+   no_collision_exception=None, no_collision_details=None,
+   no_report_cost=None, dat_filename=None, trajs_fileformstr=None):
    cmd = 'runchomp'
    if robot is not None:
       if hasattr(robot,'GetName'):
@@ -87,6 +87,8 @@ def runchomp(mod, robot=None, adofgoal=None, n_iter=None, max_time=None,
       cmd += ' obs_factor_self %f' % obs_factor_self
    if no_collision_exception is not None and no_collision_exception:
       cmd += ' no_collision_exception'
+   if no_collision_details is not None and no_collision_details:
+      cmd += ' no_collision_details'
    if no_report_cost is not None and no_report_cost:
       cmd += ' no_report_cost'
    if dat_filename is not None:
