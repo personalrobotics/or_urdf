@@ -489,8 +489,8 @@ int sphere_cost_pre(struct cost_helper * h, int m, double ** T_points)
    /* next do the start vel */
    if (h->m != h->n_points - 2)
    {
-      cd_mat_memcpy(h->sphere_vels, h->sphere_poss + h->n_spheres_active*3, 1, h->n_spheres_active*3);
-      cd_mat_sub(h->sphere_vels, h->sphere_poss, 1, h->n_spheres_active*3);
+      cd_mat_memcpy(h->sphere_vels, h->sphere_poss_all + h->n_spheres_active*3, 1, h->n_spheres_active*3);
+      cd_mat_sub(h->sphere_vels, h->sphere_poss_all, 1, h->n_spheres_active*3);
       cd_mat_scale(h->sphere_vels, 1, h->n_spheres_active*3, 1.0/(h->dt));
    }
    
@@ -499,10 +499,10 @@ int sphere_cost_pre(struct cost_helper * h, int m, double ** T_points)
    internal = h->sphere_accs;
    if (h->m != h->n_points - 2)
       internal += h->n_spheres_active*3;
-   cd_mat_memcpy(internal, h->sphere_poss + h->n_spheres_active*3, h->n_points-2, h->n_spheres_active*3);
+   cd_mat_memcpy(internal, h->sphere_poss_all + h->n_spheres_active*3, h->n_points-2, h->n_spheres_active*3);
    cd_mat_scale(internal, h->n_points-2, h->n_spheres_active*3, -2.0);
-   cd_mat_add(internal, h->sphere_poss, h->n_points-2, h->n_spheres_active*3);
-   cd_mat_add(internal, h->sphere_poss + 2*h->n_spheres_active*3, h->n_points-2, h->n_spheres_active*3);
+   cd_mat_add(internal, h->sphere_poss_all, h->n_points-2, h->n_spheres_active*3);
+   cd_mat_add(internal, h->sphere_poss_all + 2*h->n_spheres_active*3, h->n_points-2, h->n_spheres_active*3);
    cd_mat_scale(internal, h->n_points-2, h->n_spheres_active*3, 1.0/(h->dt * h->dt));
    /* simply copy 1st accel into the 0th accel for now */
    if (h->m != h->n_points - 2)
@@ -1289,12 +1289,6 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    RAVELOG_INFO("iterating CHOMP ...\n");
    for (iter=0; iter<n_iter; iter++)
    {
-#if 0
-      /* lambda increases over time */
-      c->lambda = 10.0 * exp(0.1 * iter);
-      RAVELOG_INFO("lambda: %f\n", c->lambda);
-#endif
-
       /* resample momentum if using hmc */
       if (use_hmc && iter == hmc_resample_iter)
       {
