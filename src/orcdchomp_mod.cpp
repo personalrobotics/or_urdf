@@ -1029,7 +1029,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
          if (h.ee_torque_weights) { exc = "Only one ee_torque_weights can be passed!"; goto error; }
          cd_util_shparse(argv[++i], &h.ee_torque_weights_n, &my_argv);
          h.ee_torque_weights = (double *) malloc(h.ee_torque_weights_n * sizeof(double));
-         for (j=0; j<ee_torque_weights_n; j++)
+         for (j=0; j<h.ee_torque_weights_n; j++)
             h.ee_torque_weights[j] = atof(my_argv[j]);
          free(my_argv);
          cd_mat_vec_print("parsed ee_torque_weights: ", h.ee_torque_weights, h.ee_torque_weights_n);
@@ -1087,7 +1087,7 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    
    /* ensure that if we're doing the ee_force math, the active dofs are
     * only revolute dofs (since we do our own jacobian math) */
-   if (ee_torque_weights)
+   if (h.ee_torque_weights)
    {
       printf("ee_torque_weights check for revolute only ...\n");
       for (i=0; i<n_dof; i++)
