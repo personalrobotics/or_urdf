@@ -412,6 +412,10 @@ struct cost_helper
    struct tsr * start_tsr;
    int start_tsr_enabled[6]; /* xyzrpy */
    int start_tsr_k;
+   double ee_force[3];
+   double ee_force_at[3];
+   double * ee_torque_weights;
+   int ee_torque_weights_n;
    
    double epsilon;
    double epsilon_self;
@@ -845,10 +849,6 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    int no_collision_details;
    char * dat_filename;
    char * trajs_fileformstr;
-   double ee_force[3];
-   double ee_force_at[3];
-   double * ee_torque_weights;
-   int ee_torque_weights_n;
    /* stuff we compute later */
    char trajs_filename[1024];
    int * adofindices;
@@ -918,10 +918,10 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    no_collision_details = 0;
    dat_filename = 0;
    trajs_fileformstr = 0;
-   cd_mat_set_zero(ee_force, 3, 1);
-   cd_mat_set_zero(ee_force_at, 3, 1);
-   ee_torque_weights = 0;
-   ee_torque_weights_n = 0;
+   cd_mat_set_zero(h.ee_force, 3, 1);
+   cd_mat_set_zero(h.ee_force_at, 3, 1);
+   h.ee_torque_weights = 0;
+   h.ee_torque_weights_n = 0;
    
    /* parse command line arguments */
    for (i=1; i<argc; i++)
@@ -999,15 +999,15 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
          cd_util_shparse(argv[++i], &ee_force_argc, &ee_force_argv);
          if (ee_force_argc == 1)
          {
-            ee_force[0] = 0.0;
-            ee_force[1] = 0.0;
-            ee_force[2] = -atof(ee_force_argv[0]);
+            h.ee_force[0] = 0.0;
+            h.ee_force[1] = 0.0;
+            h.ee_force[2] = -atof(ee_force_argv[0]);
          }
          else if (ee_force_argc == 3)
          {
-            ee_force[0] = atof(ee_force_argv[0]);
-            ee_force[1] = atof(ee_force_argv[1]);
-            ee_force[2] = atof(ee_force_argv[2]);
+            h.ee_force[0] = atof(ee_force_argv[0]);
+            h.ee_force[1] = atof(ee_force_argv[1]);
+            h.ee_force[2] = atof(ee_force_argv[2]);
          }
          else
             { exc = "ee_force must be length 1 or 3!"; goto error; }
@@ -1019,20 +1019,20 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
          cd_util_shparse(argv[++i], &ee_force_at_argc, &ee_force_at_argv);
          if (ee_force_at_argc != 3)
             { exc = "ee_force_at must be length 3!"; goto error; }
-         ee_force_at[0] = atof(ee_force_at_argv[0]);
-         ee_force_at[1] = atof(ee_force_at_argv[1]);
-         ee_force_at[2] = atof(ee_force_at_argv[2]);
+         h.ee_force_at[0] = atof(ee_force_at_argv[0]);
+         h.ee_force_at[1] = atof(ee_force_at_argv[1]);
+         h.ee_force_at[2] = atof(ee_force_at_argv[2]);
       }
       else if (strcmp(argv[i],"ee_torque_weights")==0 && i+1<argc)
       {
          char ** my_argv;
-         if (ee_torque_weights) { exc = "Only one ee_torque_weights can be passed!"; goto error; }
-         cd_util_shparse(argv[++i], &ee_torque_weights_n, &my_argv);
-         ee_torque_weights = (double *) malloc(ee_torque_weights_n * sizeof(double));
+         if (h.ee_torque_weights) { exc = "Only one ee_torque_weights can be passed!"; goto error; }
+         cd_util_shparse(argv[++i], &h.ee_torque_weights_n, &my_argv);
+         h.ee_torque_weights = (double *) malloc(h.ee_torque_weights_n * sizeof(double));
          for (j=0; j<ee_torque_weights_n; j++)
-            ee_torque_weights[j] = atof(my_argv[j]);
+            h.ee_torque_weights[j] = atof(my_argv[j]);
          free(my_argv);
-         cd_mat_vec_print("parsed ee_torque_weights: ", ee_torque_weights, ee_torque_weights_n);
+         cd_mat_vec_print("parsed ee_torque_weights: ", h.ee_torque_weights, h.ee_torque_weights_n);
       }
       else break;
    }
@@ -1065,9 +1065,9 @@ int mod::runchomp(int argc, char * argv[], std::ostream& sout)
    }
    
    /* check that ee_torque_weights_n matches */
-   if (ee_torque_weights && (ee_torque_weights_n != n_dof))
+   if (h.ee_torque_weights && (h.ee_torque_weights_n != n_dof))
    {
-      RAVELOG_INFO("n_dof: %d; ee_torque_weights_n: %d\n", n_dof, ee_torque_weights_n);
+      RAVELOG_INFO("n_dof: %d; ee_torque_weights_n: %d\n", n_dof, h.ee_torque_weights_n);
       exc = "size of ee_torque_weights does not match active dofs!";
       goto error;
    }
@@ -1472,7 +1472,7 @@ error:
    free(adofindices);
    free(spheres_active);
    free(adofgoal);
-   free(ee_torque_weights);
+   free(h.ee_torque_weights);
    if (h.start_tsr) tsr_destroy(h.start_tsr);
    if (rng) gsl_rng_free(rng);
    if (fp_dat) fclose(fp_dat);
