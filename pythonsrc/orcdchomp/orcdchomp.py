@@ -11,6 +11,10 @@ import openravepy
 def bind(mod):
    mod.viewspheres = types.MethodType(viewspheres,mod)
    mod.computedistancefield = types.MethodType(computedistancefield,mod)
+   mod.create = types.MethodType(create,mod)
+   mod.iterate = types.MethodType(iterate,mod)
+   mod.gettraj = types.MethodType(gettraj,mod)
+   mod.destroy = types.MethodType(destroy,mod)
    mod.runchomp = types.MethodType(runchomp,mod)
 
 def shquot(s):
@@ -42,13 +46,12 @@ def computedistancefield(mod, kinbody=None, cube_extent=None, aabb_padding=None,
    print 'cmd:', cmd
    return mod.SendCommand(cmd)
 
-def runchomp(mod, robot=None, adofgoal=None, n_iter=None, max_time=None,
-   lambda_=None, starttraj=None, n_points=None, start_tsr=None,
+def create(mod, robot=None, adofgoal=None, lambda_=None,
+   starttraj=None, n_points=None, start_tsr=None, start_cost=None,
    use_momentum=None, use_hmc=None, hmc_resample_lambda=None, seed=None,
    epsilon=None, epsilon_self=None, obs_factor=None, obs_factor_self=None,
-   no_collision_exception=None, no_collision_details=None,
    no_report_cost=None, dat_filename=None, trajs_fileformstr=None):
-   cmd = 'runchomp'
+   cmd = 'create'
    if robot is not None:
       if hasattr(robot,'GetName'):
          cmd += ' robot %s' % shquot(robot.GetName())
@@ -56,10 +59,6 @@ def runchomp(mod, robot=None, adofgoal=None, n_iter=None, max_time=None,
          cmd += ' robot %s' % shquot(robot)
    if adofgoal is not None:
       cmd += ' adofgoal %s' % shquot(' '.join([str(v) for v in adofgoal]))
-   if n_iter is not None:
-      cmd += ' n_iter %d' % n_iter
-   if max_time is not None:
-      cmd += ' max_time %f' % max_time
    if lambda_ is not None:
       cmd += ' lambda %0.04f' % lambda_
    if starttraj is not None:
@@ -69,6 +68,11 @@ def runchomp(mod, robot=None, adofgoal=None, n_iter=None, max_time=None,
       cmd += ' n_points %d' % n_points
    if start_tsr is not None:
       cmd += ' start_tsr \'%s\'' % start_tsr.serialize()
+   if start_cost is not None:
+      if isinstance(start_cost, str):
+         cmd += ' start_cost \'%s\'' % start_cost
+      else:
+         cmd += ' start_cost \'%s %s\'' % (start_cost[0], start_cost[1])
    if use_momentum is not None and use_momentum:
       cmd += ' use_momentum'
    if use_hmc is not None and use_hmc:
@@ -85,10 +89,6 @@ def runchomp(mod, robot=None, adofgoal=None, n_iter=None, max_time=None,
       cmd += ' obs_factor %f' % obs_factor
    if obs_factor_self is not None:
       cmd += ' obs_factor_self %f' % obs_factor_self
-   if no_collision_exception is not None and no_collision_exception:
-      cmd += ' no_collision_exception'
-   if no_collision_details is not None and no_collision_details:
-      cmd += ' no_collision_details'
    if no_report_cost is not None and no_report_cost:
       cmd += ' no_report_cost'
    if dat_filename is not None:
@@ -96,5 +96,60 @@ def runchomp(mod, robot=None, adofgoal=None, n_iter=None, max_time=None,
    if trajs_fileformstr is not None:
       cmd += ' trajs_fileformstr %s' % shquot(trajs_fileformstr)
    print 'cmd:', cmd
+   return mod.SendCommand(cmd)
+
+def iterate(mod, run=None, n_iter=None, max_time=None):
+   cmd = 'iterate'
+   if run is not None:
+      cmd += ' run %s' % run
+   if n_iter is not None:
+      cmd += ' n_iter %d' % n_iter
+   if max_time is not None:
+      cmd += ' max_time %f' % max_time
+   return mod.SendCommand(cmd)
+
+def gettraj(mod, run=None, no_collision_check=None,
+      no_collision_exception=None, no_collision_details=None):
+   cmd = 'gettraj'
+   if run is not None:
+      cmd += ' run %s' % run
+   if no_collision_check is not None and no_collision_check:
+      cmd += ' no_collision_check'
+   if no_collision_exception is not None and no_collision_exception:
+      cmd += ' no_collision_exception'
+   if no_collision_details is not None and no_collision_details:
+      cmd += ' no_collision_details'
    out_traj_data = mod.SendCommand(cmd)
    return openravepy.RaveCreateTrajectory(mod.GetEnv(),'').deserialize(out_traj_data)
+   
+def destroy(mod, run=None):
+   cmd = 'destroy'
+   if run is not None:
+      cmd += ' run %s' % run
+   return mod.SendCommand(cmd)
+
+def runchomp(mod, **kwargs):
+   # extract non-create args
+   n_iter = None
+   max_time = None
+   no_collision_exception = None
+   no_collision_details = None
+   if 'n_iter' in kwargs:
+      n_iter = kwargs['n_iter']
+      del kwargs['n_iter']
+   if 'max_time' in kwargs:
+      max_time = kwargs['max_time']
+      del kwargs['max_time']
+   if 'no_collision_exception' in kwargs:
+      no_collision_exception = kwargs['no_collision_exception']
+      del kwargs['no_collision_exception']
+   if 'no_collision_details' in kwargs:
+      no_collision_details = kwargs['no_collision_details']
+      del kwargs['no_collision_details']
+   run = create(mod, **kwargs)
+   iterate(mod, run=run, n_iter=n_iter, max_time=max_time)
+   traj = gettraj(mod, run=run,
+      no_collision_exception=no_collision_exception,
+      no_collision_details=no_collision_details)
+   destroy(mod, run=run)
+   return traj

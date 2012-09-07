@@ -28,14 +28,20 @@ public:
    
    int viewspheres(int argc, char * argv[], std::ostream& sout);
    int computedistancefield(int argc, char * argv[], std::ostream& sout);
-   int runchomp(int argc, char * argv[], std::ostream& sout);
+   int create(int argc, char * argv[], std::ostream& sout);
+   int iterate(int argc, char * argv[], std::ostream& sout);
+   int gettraj(int argc, char * argv[], std::ostream& sout);
+   int destroy(int argc, char * argv[], std::ostream& sout);
 
    mod(OpenRAVE::EnvironmentBasePtr penv) : OpenRAVE::ModuleBase(penv)
    {
       __description = "orcdchomp: implementation chomp using libcd";
       RegisterCommand("viewspheres",orcwrap(boost::bind(&mod::viewspheres,this,_1,_2,_3)),"view spheres");
       RegisterCommand("computedistancefield",orcwrap(boost::bind(&mod::computedistancefield,this,_1,_2,_3)),"compute distance field");
-      RegisterCommand("runchomp",orcwrap(boost::bind(&mod::runchomp,this,_1,_2,_3)),"run chomp");
+      RegisterCommand("create",orcwrap(boost::bind(&mod::create,this,_1,_2,_3)),"create a chomp run");
+      RegisterCommand("iterate",orcwrap(boost::bind(&mod::iterate,this,_1,_2,_3)),"create a chomp run");
+      RegisterCommand("gettraj",orcwrap(boost::bind(&mod::gettraj,this,_1,_2,_3)),"create a chomp run");
+      RegisterCommand("destroy",orcwrap(boost::bind(&mod::destroy,this,_1,_2,_3)),"create a chomp run");
       
       this->e = penv;
       this->n_sdfs = 0;
@@ -46,6 +52,8 @@ public:
    /* This is called on e.LoadProblem(m, 'command') */
    int main(const std::string& cmd) { RAVELOG_INFO("module init cmd: %s\n", cmd.c_str()); return 0; }
 };
+
+void run_destroy(struct run * r);
 
 struct tsr
 {
