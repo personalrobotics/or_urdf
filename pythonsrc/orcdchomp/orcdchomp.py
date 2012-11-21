@@ -50,7 +50,7 @@ def create(mod, robot=None, adofgoal=None, lambda_=None,
    starttraj=None, n_points=None, start_tsr=None, start_cost=None,
    use_momentum=None, use_hmc=None, hmc_resample_lambda=None, seed=None,
    epsilon=None, epsilon_self=None, obs_factor=None, obs_factor_self=None,
-   no_report_cost=None, dat_filename=None, trajs_fileformstr=None):
+   no_report_cost=None, dat_filename=None):
    cmd = 'create'
    if robot is not None:
       if hasattr(robot,'GetName'):
@@ -93,12 +93,10 @@ def create(mod, robot=None, adofgoal=None, lambda_=None,
       cmd += ' no_report_cost'
    if dat_filename is not None:
       cmd += ' dat_filename %s' % shquot(dat_filename)
-   if trajs_fileformstr is not None:
-      cmd += ' trajs_fileformstr %s' % shquot(trajs_fileformstr)
    print 'cmd:', cmd
    return mod.SendCommand(cmd)
 
-def iterate(mod, run=None, n_iter=None, max_time=None):
+def iterate(mod, run=None, n_iter=None, max_time=None, trajs_fileformstr=None):
    cmd = 'iterate'
    if run is not None:
       cmd += ' run %s' % run
@@ -106,6 +104,8 @@ def iterate(mod, run=None, n_iter=None, max_time=None):
       cmd += ' n_iter %d' % n_iter
    if max_time is not None:
       cmd += ' max_time %f' % max_time
+   if trajs_fileformstr is not None:
+      cmd += ' trajs_fileformstr %s' % shquot(trajs_fileformstr)
    return mod.SendCommand(cmd)
 
 def gettraj(mod, run=None, no_collision_check=None,
@@ -134,6 +134,7 @@ def runchomp(mod, **kwargs):
    max_time = None
    no_collision_exception = None
    no_collision_details = None
+   trajs_fileformstr = None
    if 'n_iter' in kwargs:
       n_iter = kwargs['n_iter']
       del kwargs['n_iter']
@@ -146,8 +147,11 @@ def runchomp(mod, **kwargs):
    if 'no_collision_details' in kwargs:
       no_collision_details = kwargs['no_collision_details']
       del kwargs['no_collision_details']
+   if 'trajs_fileformstr' in kwargs:
+      trajs_fileformstr = kwargs['trajs_fileformstr']
+      del kwargs['trajs_fileformstr']
    run = create(mod, **kwargs)
-   iterate(mod, run=run, n_iter=n_iter, max_time=max_time)
+   iterate(mod, run=run, n_iter=n_iter, max_time=max_time, trajs_fileformstr=trajs_fileformstr)
    traj = gettraj(mod, run=run,
       no_collision_exception=no_collision_exception,
       no_collision_details=no_collision_details)

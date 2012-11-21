@@ -462,7 +462,6 @@ struct run
    struct timespec ticks_selfcol;
    
    /* logging */
-   char * trajs_fileformstr;
    FILE * fp_dat;
    
    /* the chomp itself */
@@ -940,7 +939,6 @@ int mod::create(int argc, char * argv[], std::ostream& sout)
    cd_os_timespec_set_zero(&r->ticks_fk);
    cd_os_timespec_set_zero(&r->ticks_jacobians);
    cd_os_timespec_set_zero(&r->ticks_selfcol);
-   r->trajs_fileformstr = 0;
    r->fp_dat = 0;
    r->c = 0;
    r->iter = 0;
@@ -1011,8 +1009,6 @@ int mod::create(int argc, char * argv[], std::ostream& sout)
          r->obs_factor_self = atof(argv[++i]);
       else if (strcmp(argv[i],"dat_filename")==0 && i+1<argc)
          dat_filename = argv[++i];
-      else if (strcmp(argv[i],"trajs_fileformstr")==0 && i+1<argc)
-         r->trajs_fileformstr = argv[++i];
       else if (strcmp(argv[i],"ee_force")==0 && i+1<argc)
       {
          int ee_force_argc;
@@ -1065,7 +1061,6 @@ int mod::create(int argc, char * argv[], std::ostream& sout)
    
    RAVELOG_INFO("Using robot %s.\n", r->robot->GetName().c_str());
    if (dat_filename) RAVELOG_INFO("Using dat_filename |%s|.\n", dat_filename);
-   if (r->trajs_fileformstr) RAVELOG_INFO("Using trajs_fileformstr |%s|.\n", r->trajs_fileformstr);
    
    /* check validity of input arguments ... */
    if (!r->robot) { exc = "Did not pass a robot!"; goto error; }
@@ -1329,6 +1324,7 @@ int mod::iterate(int argc, char * argv[], std::ostream& sout)
    struct run * r = 0;
    int n_iter = 1;
    double max_time = HUGE_VAL;
+   char * trajs_fileformstr = 0;
    /* other */
    struct cd_chomp * c;
    double hmc_alpha;
@@ -1355,6 +1351,8 @@ int mod::iterate(int argc, char * argv[], std::ostream& sout)
          n_iter = atoi(argv[++i]);
       else if (strcmp(argv[i],"max_time")==0 && i+1<argc)
          max_time = atof(argv[++i]);
+      else if (strcmp(argv[i],"trajs_fileformstr")==0 && i+1<argc)
+         trajs_fileformstr = argv[++i];
       else break;
    }
    if (i<argc)
@@ -1366,6 +1364,8 @@ int mod::iterate(int argc, char * argv[], std::ostream& sout)
    /* check argument values */
    if (!r) throw OpenRAVE::openrave_exception("you must pass a created run!");
    if (n_iter < 0) throw OpenRAVE::openrave_exception("n_iter must be >=0!");
+
+   if (trajs_fileformstr) RAVELOG_INFO("Using trajs_fileformstr |%s|.\n", trajs_fileformstr);
    
    /* convenience stuff */
    c = r->c;
@@ -1396,12 +1396,12 @@ int mod::iterate(int argc, char * argv[], std::ostream& sout)
       }
       
       /* dump the intermediate trajectory before each iteration */
-      if (r->trajs_fileformstr)
+      if (trajs_fileformstr)
       {
          clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ticks_toc);
          CD_OS_TIMESPEC_SUB(&ticks_toc, &ticks_tic);
          CD_OS_TIMESPEC_ADD(&ticks, &ticks_toc);
-         sprintf(trajs_filename, r->trajs_fileformstr, r->iter);
+         sprintf(trajs_filename, trajs_fileformstr, r->iter);
          t = OpenRAVE::RaveCreateTrajectory(this->e);
          t->Init(r->robot->GetActiveConfigurationSpecification());
          for (i=0; i<r->n_points; i++)
