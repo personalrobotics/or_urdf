@@ -234,6 +234,12 @@ int mod::computedistancefield(int argc, char * argv[], std::ostream& sout)
    /* create sdf_new object */
    if (!sdf_new.grid)
    {
+      struct timespec ticks_tic;
+      struct timespec ticks_toc;
+
+      /* start timing voxel grid computation */
+      clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ticks_tic);
+
       /* copy in name */
       strcpy(sdf_new.kinbody_name, kinbody->GetName().c_str());
 
@@ -339,6 +345,14 @@ int mod::computedistancefield(int argc, char * argv[], std::ostream& sout)
       /* remove cube */
       this->e->Remove(cube);
       
+      /* stop timing voxel grid computation */
+      clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ticks_toc);
+      CD_OS_TIMESPEC_SUB(&ticks_toc, &ticks_tic);
+      RAVELOG_INFO("total voxel grid computation time: %f seconds.\n", CD_OS_TIMESPEC_DOUBLE(&ticks_toc));
+
+      /* start timing flood fill computation */
+      clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ticks_tic);
+
       /* we assume the point at the very top is free;
        * do flood fill to set all cells that are 1.0 -> 0.0 */
       RAVELOG_INFO("performing flood fill ...\n");
@@ -353,9 +367,23 @@ int mod::computedistancefield(int argc, char * argv[], std::ostream& sout)
          if (*(double *)cd_grid_get_index(g_obs, idx) == 1.0)
             *(double *)cd_grid_get_index(g_obs, idx) = HUGE_VAL;
       
+      /* stop timing flood fill computation */
+      clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ticks_toc);
+      CD_OS_TIMESPEC_SUB(&ticks_toc, &ticks_tic);
+      RAVELOG_INFO("total flood fill computation time: %f seconds.\n", CD_OS_TIMESPEC_DOUBLE(&ticks_toc));
+
+      /* start timing sdf computation */
+      clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ticks_tic);
+
       /* compute the signed distance field (in the module instance) */
       RAVELOG_INFO("computing signed distance field ...\n");
       cd_grid_double_bin_sdf(&sdf_new.grid, g_obs);
+
+      /* stop timing sdf computation */
+      clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ticks_toc);
+      CD_OS_TIMESPEC_SUB(&ticks_toc, &ticks_tic);
+      RAVELOG_INFO("total sdf computation time: %f seconds.\n", CD_OS_TIMESPEC_DOUBLE(&ticks_toc));
+
       cd_grid_destroy(g_obs);
       
       /* if we were passed a cache_filename, save what we just computed! */
@@ -433,6 +461,13 @@ struct run
    int start_tsr_k;
    int (*start_cost)(void * ptr, int n, double * point, double * cost, double * grad);
    void * start_cost_ptr;
+   
+   /* optional every_n constraint */
+   struct tsr * everyn_tsr;
+   int everyn_tsr_enabled[6]; /* xyzrpy */
+   int everyn_tsr_k;
+   int (*everyn_cost)(void * ptr, int n, double * point, double * cost, double * grad);
+   void * everyn_cost_ptr;
    
    /* ee_force stuff */
    double ee_force[3];
@@ -740,6 +775,116 @@ int sphere_cost(struct run * h, struct cd_chomp * c, int ti, double * c_point, d
    return 0;
 }
 
+int con_everyn_tsr(struct run * h, struct cd_chomp * c, int ti, double * point, double * con_val, double * con_jacobian)
+{
+   int tsri;
+   int ki;
+   int i;
+   int j;
+   double pose_ee[7];
+   double pose_obj[7];
+   double pose_ee_obj[7];
+   double pose_table_world[7];
+   double pose_table_obj[7];
+   double xyzypr_table_obj[7];
+   
+   double * spajac_world;
+   int ee_link_index;
+   boost::multi_array< OpenRAVE::dReal, 2 > orjacobian;
+   double xm_table_world[6][6];
+   double jac_inverse[7][6];
+   double pose_to_xyzypr_jac[6][7];
+   double * full_result;
+   double temp6x6a[6][6];
+   double temp6x6b[6][6];
+   
+   /* put the arm in this configuration */
+   std::vector<OpenRAVE::dReal> vec(point, point + c->n);
+   h->robot->SetActiveDOFValues(vec);
+   
+   /* get the end-effector transform */
+   OpenRAVE::Transform t = h->robot->GetActiveManipulator()->GetEndEffectorTransform();
+   pose_ee[0] = t.trans.x;
+   pose_ee[1] = t.trans.y;
+   pose_ee[2] = t.trans.z;
+   pose_ee[3] = t.rot.y;
+   pose_ee[4] = t.rot.z;
+   pose_ee[5] = t.rot.w;
+   pose_ee[6] = t.rot.x;
+   
+   /* get the object pose */
+   cd_kin_pose_invert(h->everyn_tsr->Twe, pose_ee_obj);
+   cd_kin_pose_compose(pose_ee, pose_ee_obj, pose_obj);
+   
+   /* get the pose of the world w.r.t. the table */
+   cd_kin_pose_invert(h->everyn_tsr->T0w, pose_table_world);
+   
+   /* get the pose of the object w.r.t. the table */
+   cd_kin_pose_compose(pose_table_world, pose_obj, pose_table_obj);
+   
+   /* convert to xyzypr */
+   cd_kin_pose_to_xyzypr(pose_table_obj, xyzypr_table_obj);
+   
+   /* fill the constraint value vector */
+   ki=0;
+   for (tsri=0; tsri<6; tsri++) if (h->everyn_tsr_enabled[tsri])
+   {
+      con_val[ki] = xyzypr_table_obj[tsri<3?tsri:8-tsri];
+      ki++;
+   }
+   
+   if (con_jacobian)
+   {
+      /* compute the spatial Jacobian! */
+      spajac_world = (double *) malloc(6 * c->n * sizeof(double));
+      full_result = (double *) malloc(6 * c->n * sizeof(double));
+      
+      ee_link_index = h->robot->GetActiveManipulator()->GetEndEffector()->GetIndex();
+      
+      /* copy the active columns of (rotational) orjacobian into our J */
+      h->robot->CalculateAngularVelocityJacobian(ee_link_index, orjacobian);
+      for (i=0; i<3; i++)
+         for (j=0; j<c->n; j++)
+            spajac_world[i*c->n+j] = orjacobian[i][h->adofindices[j]];
+      
+      /* copy the active columns of (translational) orjacobian into our J */
+      h->robot->CalculateJacobian(ee_link_index, OpenRAVE::Vector(0.0, 0.0, 0.0), orjacobian);
+      for (i=0; i<3; i++)
+         for (j=0; j<c->n; j++)
+            spajac_world[(3+i)*c->n+j] = orjacobian[i][h->adofindices[j]];
+            
+      /* compute the spatial transform to get velocities in table frame */
+      cd_spatial_xm_from_pose(xm_table_world, pose_table_world);
+      
+      /* calculate the pose derivative Jacobian matrix */
+      cd_spatial_pose_jac_inverse(pose_table_obj, jac_inverse);
+      
+      /* calculate the xyzypr Jacobian matrix */
+      cd_kin_pose_to_xyzypr_J(pose_table_obj, pose_to_xyzypr_jac);
+      
+      /* do the matrix multiplications! */
+      cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 6, 6, 7,
+         1.0, *pose_to_xyzypr_jac,7, *jac_inverse,6, 0.0, *temp6x6a,6);
+      cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 6, 6, 6,
+         1.0, *temp6x6a,6, *xm_table_world,6, 0.0, *temp6x6b,6);
+      cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, 6, c->n, 6,
+         1.0, *temp6x6b,6, spajac_world,c->n, 0.0, full_result,c->n);
+      
+      /* fill the constraint Jacbobian matrix */
+      ki=0;
+      for (tsri=0; tsri<6; tsri++) if (h->everyn_tsr_enabled[tsri])
+      {
+         cd_mat_memcpy(con_jacobian+ki*c->n, full_result+(tsri<3?tsri:8-tsri)*c->n, 1, c->n);
+         ki++;
+      }
+      
+      free(spajac_world);
+      free(full_result);
+   }
+   
+   return 0;
+}
+
 int con_start_tsr(struct run * h, struct cd_chomp * c, int ti, double * point, double * con_val, double * con_jacobian)
 {
    int tsri;
@@ -795,7 +940,6 @@ int con_start_tsr(struct run * h, struct cd_chomp * c, int ti, double * point, d
    for (tsri=0; tsri<6; tsri++) if (h->start_tsr_enabled[tsri])
    {
       con_val[ki] = xyzypr_table_obj[tsri<3?tsri:8-tsri];
-      con_val[ki] = 0.0;
       ki++;
    }
    
@@ -922,6 +1066,11 @@ int mod::create(int argc, char * argv[], std::ostream& sout)
    r->start_tsr_k = 0;
    r->start_cost = 0;
    r->start_cost_ptr = 0;
+   r->everyn_tsr = 0;
+   for (i=0; i<6; i++) r->everyn_tsr_enabled[i] = 0;
+   r->everyn_tsr_k = 0;
+   r->everyn_cost = 0;
+   r->everyn_cost_ptr = 0;
    cd_mat_set_zero(r->ee_force, 3, 1);
    cd_mat_set_zero(r->ee_force_at, 3, 1);
    r->ee_torque_weights = 0;
@@ -971,7 +1120,12 @@ int mod::create(int argc, char * argv[], std::ostream& sout)
       else if (strcmp(argv[i],"start_tsr")==0 && i+1<argc)
       {
          err = tsr_create_parse(&r->start_tsr, argv[++i]);
-         if (err) { exc = "Cannot parse TSR!"; goto error; }
+         if (err) { exc = "Cannot parse start_tsr TSR!"; goto error; }
+      }
+      else if (strcmp(argv[i],"everyn_tsr")==0 && i+1<argc)
+      {
+         err = tsr_create_parse(&r->everyn_tsr, argv[++i]);
+         if (err) { exc = "Cannot parse everyn_tsr TSR!"; goto error; }
       }
       else if (strcmp(argv[i],"start_cost")==0 && i+1<argc)
       {
@@ -1237,6 +1391,25 @@ int mod::create(int argc, char * argv[], std::ostream& sout)
       printf("\n");
    }
    
+   /* calculate the dimensionality of the constraint */
+   if (r->everyn_tsr)
+   {
+      printf("everyn_tsr");
+      r->everyn_tsr_k = 0;
+      for (i=0; i<6; i++)
+      {
+         if (r->everyn_tsr->Bw[i][0] == 0.0 && r->everyn_tsr->Bw[i][1] == 0.0)
+         {
+            r->everyn_tsr_enabled[i] = 1;
+            r->everyn_tsr_k++;
+         }
+         else
+            r->everyn_tsr_enabled[i] = 0;
+         printf(" %d", r->everyn_tsr_enabled[i]);
+      }
+      printf("\n");
+   }
+   
    /* ok, ready to go! create a chomp solver */
    err = cd_chomp_create(&c, m, n, 1, &r->traj[(r->start_tsr?0:1)*n], n);
    if (err) { exc = "error creating chomp instance!"; goto error; }
@@ -1246,9 +1419,20 @@ int mod::create(int argc, char * argv[], std::ostream& sout)
    {
       double * con_val;
       con_val = (double *) malloc(r->start_tsr_k * sizeof(double));
-      printf("evaluating constraint on first point ...\n");
+      printf("evaluating start_tsr constraint on first point ...\n");
       con_start_tsr(r, c, 0, r->traj, con_val, 0);
       cd_mat_vec_print("con_val: ", con_val, r->start_tsr_k);
+      free(con_val);
+   }
+   
+   /* evaluate the everyn constraint on the start and end points */
+   if (r->everyn_tsr)
+   {
+      double * con_val;
+      con_val = (double *) malloc(r->everyn_tsr_k * sizeof(double));
+      printf("evaluating everyn_tsr constraint on middle point m=%d ...\n", m/2);
+      con_everyn_tsr(r, c, m/2, &r->traj[(m/2)*n], con_val, 0);
+      cd_mat_vec_print("con_val: ", con_val, r->everyn_tsr_k);
       free(con_val);
    }
    
@@ -1259,11 +1443,24 @@ int mod::create(int argc, char * argv[], std::ostream& sout)
    {
       c->inits[0] = 0;
       cd_chomp_add_constraint(c, r->start_tsr_k, 0, r,
-      (int (*)(void * cptr, struct cd_chomp *, int i, double * point, double * con_val, double * con_jacobian))con_start_tsr);
+         (int (*)(void * cptr, struct cd_chomp *, int i, double * point, double * con_val, double * con_jacobian))con_start_tsr);
    }
    else
       c->inits[0] = &r->traj[0*n];
+   
    c->finals[0] = &r->traj[((r->n_points)-1)*n];
+   
+   if (r->everyn_tsr)
+   {
+      int con_i;
+      for (con_i=0; con_i<m; con_i+=1)
+      {
+         RAVELOG_INFO("Adding everyn_tsr constraint to traj point i=%d\n", con_i);
+         cd_chomp_add_constraint(c, r->everyn_tsr_k, con_i, r,
+            (int (*)(void * cptr, struct cd_chomp *, int i, double * point, double * con_val, double * con_jacobian))con_everyn_tsr);
+         /*if (con_i == 51) break;*/
+      }
+   }
    
    /* set up obstacle cost */
    c->cptr = r;
@@ -1475,7 +1672,7 @@ int mod::iterate(int argc, char * argv[], std::ostream& sout)
                      r->GjlimitAinv,1, c->T,1);
          
          num_limadjs++;
-         if (num_limadjs == 100)
+         if (num_limadjs == 1000)
          {
             printf("ran too many joint limit fixes! aborting ...\n");
             abort();

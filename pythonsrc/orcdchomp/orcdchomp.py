@@ -47,7 +47,7 @@ def computedistancefield(mod, kinbody=None, cube_extent=None, aabb_padding=None,
    return mod.SendCommand(cmd)
 
 def create(mod, robot=None, adofgoal=None, lambda_=None,
-   starttraj=None, n_points=None, start_tsr=None, start_cost=None,
+   starttraj=None, n_points=None, start_tsr=None, start_cost=None, everyn_tsr=None,
    use_momentum=None, use_hmc=None, hmc_resample_lambda=None, seed=None,
    epsilon=None, epsilon_self=None, obs_factor=None, obs_factor_self=None,
    no_report_cost=None, dat_filename=None):
@@ -73,6 +73,8 @@ def create(mod, robot=None, adofgoal=None, lambda_=None,
          cmd += ' start_cost \'%s\'' % start_cost
       else:
          cmd += ' start_cost \'%s %s\'' % (start_cost[0], start_cost[1])
+   if everyn_tsr is not None:
+      cmd += ' everyn_tsr \'%s\'' % everyn_tsr.serialize()
    if use_momentum is not None and use_momentum:
       cmd += ' use_momentum'
    if use_hmc is not None and use_hmc:
