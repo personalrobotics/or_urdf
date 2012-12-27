@@ -9,7 +9,7 @@ SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 rosbuild_add_library(orcdchomp
    src/orcdchomp.cpp
    src/orcdchomp_mod.cpp
-   src/orcdchomp_rdata.cpp
+   src/orcdchomp_kdata.cpp
    src/orcwrap.cpp
    src/libcd/chomp.c
    src/libcd/grid.c

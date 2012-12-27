@@ -13,7 +13,7 @@
 #include <openrave/openrave.h>
 
 extern "C" {
-#include <libcd/util_shparse.h>
+#include "libcd/util_shparse.h"
 }
 
 #include "orcwrap.h"
