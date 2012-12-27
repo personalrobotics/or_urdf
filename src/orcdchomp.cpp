@@ -14,10 +14,10 @@
 #include <openrave/openrave.h>
 #include <openrave/plugin.h>
 
-#include "orcdchomp_rdata.h"
+#include "orcdchomp_kdata.h"
 #include "orcdchomp_mod.h"
 
-/* globals: we maintain a single rdata xml reader instance */
+/* globals: we maintain a single kdata xml reader instance */
 namespace
 {
    
@@ -25,7 +25,7 @@ static boost::shared_ptr<void> reg_reader;
 
 static OpenRAVE::BaseXMLReaderPtr rdata_parser_maker(OpenRAVE::InterfaceBasePtr ptr, const OpenRAVE::AttributesList& atts)
 {
-   return OpenRAVE::BaseXMLReaderPtr(new orcdchomp::rdata_parser(boost::shared_ptr<orcdchomp::rdata>(),atts));
+   return OpenRAVE::BaseXMLReaderPtr(new orcdchomp::kdata_parser(boost::shared_ptr<orcdchomp::kdata>(),atts));
 }
 
 } /* anonymous namespace */
@@ -33,9 +33,9 @@ static OpenRAVE::BaseXMLReaderPtr rdata_parser_maker(OpenRAVE::InterfaceBasePtr 
 
 void GetPluginAttributesValidated(OpenRAVE::PLUGININFO& info)
 { 
-   /* create the rdata xml parser interface if it does noet yet exit */
+   /* create the kdata xml parser interface if it does noet yet exit */
    if(!reg_reader)
-      reg_reader = OpenRAVE::RaveRegisterXMLReader(OpenRAVE::PT_Robot,"orcdchomp",rdata_parser_maker);
+      reg_reader = OpenRAVE::RaveRegisterXMLReader(OpenRAVE::PT_KinBody,"orcdchomp",rdata_parser_maker);
    
    info.interfacenames[OpenRAVE::PT_Module].push_back("orcdchomp");
    
