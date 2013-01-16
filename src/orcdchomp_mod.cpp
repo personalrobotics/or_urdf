@@ -1692,6 +1692,8 @@ int mod::iterate(int argc, char * argv[], std::ostream& sout)
    RAVELOG_INFO("  ticks_smoothgrad   %.8f\n", cd_os_timespec_double(&c->ticks_smoothgrad));
    RAVELOG_INFO("  ticks_smoothcost   %.8f\n", cd_os_timespec_double(&c->ticks_smoothcost));
    
+   sout << cost_total;
+
    return 0;
 }
 

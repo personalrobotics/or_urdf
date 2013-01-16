@@ -50,7 +50,7 @@ def create(mod, robot=None, adofgoal=None, lambda_=None,
    starttraj=None, n_points=None, start_tsr=None, start_cost=None, everyn_tsr=None,
    use_momentum=None, use_hmc=None, hmc_resample_lambda=None, seed=None,
    epsilon=None, epsilon_self=None, obs_factor=None, obs_factor_self=None,
-   no_report_cost=None, dat_filename=None):
+   no_report_cost=None, dat_filename=None, cost=None):
    cmd = 'create'
    if robot is not None:
       if hasattr(robot,'GetName'):
@@ -98,7 +98,7 @@ def create(mod, robot=None, adofgoal=None, lambda_=None,
    print 'cmd:', cmd
    return mod.SendCommand(cmd)
 
-def iterate(mod, run=None, n_iter=None, max_time=None, trajs_fileformstr=None):
+def iterate(mod, run=None, n_iter=None, max_time=None, trajs_fileformstr=None, cost=None):
    cmd = 'iterate'
    if run is not None:
       cmd += ' run %s' % run
@@ -108,7 +108,10 @@ def iterate(mod, run=None, n_iter=None, max_time=None, trajs_fileformstr=None):
       cmd += ' max_time %f' % max_time
    if trajs_fileformstr is not None:
       cmd += ' trajs_fileformstr %s' % shquot(trajs_fileformstr)
-   return mod.SendCommand(cmd)
+   cost_data = mod.SendCommand(cmd)
+   if cost is not None:
+      cost[0] = float(cost_data)
+   return 
 
 def gettraj(mod, run=None, no_collision_check=None,
       no_collision_exception=None, no_collision_details=None):
@@ -137,6 +140,7 @@ def runchomp(mod, **kwargs):
    no_collision_exception = None
    no_collision_details = None
    trajs_fileformstr = None
+   cost = None
    if 'n_iter' in kwargs:
       n_iter = kwargs['n_iter']
       del kwargs['n_iter']
@@ -152,8 +156,10 @@ def runchomp(mod, **kwargs):
    if 'trajs_fileformstr' in kwargs:
       trajs_fileformstr = kwargs['trajs_fileformstr']
       del kwargs['trajs_fileformstr']
+   if 'cost' in kwargs:
+      cost = kwargs['cost']
    run = create(mod, **kwargs)
-   iterate(mod, run=run, n_iter=n_iter, max_time=max_time, trajs_fileformstr=trajs_fileformstr)
+   iterate(mod, run=run, n_iter=n_iter, max_time=max_time, trajs_fileformstr=trajs_fileformstr, cost=cost)
    traj = gettraj(mod, run=run,
       no_collision_exception=no_collision_exception,
       no_collision_details=no_collision_details)
