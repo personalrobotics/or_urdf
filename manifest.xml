@@ -1,8 +1,8 @@
 <package>
-  <description brief="orcdchomp">
-     orcdchomp is an implementation of chomp using libcd.
+  <description brief="urdf_loader">
+     urdf_loader is an OpenRAVE plugin to load URDF files directly.
   </description>
-  <author>Chris Dellin</author>
+  <author>Pras Velagapudi</author>
   <depend package="openrave"/>
   <export>
     <python path="${prefix}/pythonsrc"/>
