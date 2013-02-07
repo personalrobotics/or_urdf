@@ -1,70 +1,41 @@
-/** \file orcdchomp_mod.h
- * \brief Interface to the orcdchomp module, an implementation of CHOMP
- *        using libcd.
- * \author Christopher Dellin
- * \date 2012
+/** \file urdf_loader.h
+ * \brief Interface to a URDF loading plugin for OpenRAVE
+ * \author Pras Velagapudi
+ * \date 2013
  */
 
-/* (C) Copyright 2012 Carnegie Mellon University */
+/* (C) Copyright 2013 Carnegie Mellon University */
 
-/* requires:
- *  - openrave/openrave.h
- * */
+#include <openrave/openrave.h>
+#include <openrave/plugin.h>
+#include <boost/bind.hpp>
 
-#include "orcwrap.h"
-
-namespace orcdchomp
+namespace urdf_loader
 {
 
-struct sdf;
+  class URDFLoader : public OpenRAVE::ModuleBase
+  {
+  public:
+    OpenRAVE::EnvironmentBasePtr _env; /* filled on module creation */
+    
+    /** Opens a URDF file and returns a robot in OpenRAVE */
+    bool load(ostream& sout, istream& sin);
+    
+    /** Constructs plugin and registers functions */
+    URDFLoader(OpenRAVE::EnvironmentBasePtr env) : OpenRAVE::ModuleBase(env)
+    {
+      __description = "URDFLoader: Loader that imports URDF files.";
+      _env = env;
 
-/* the module itself */
-class mod : public OpenRAVE::ModuleBase
-{
-public:
-   OpenRAVE::EnvironmentBasePtr e; /* filled on module creation */
-   int n_sdfs;
-   struct sdf * sdfs;
-   
-   int viewspheres(int argc, char * argv[], std::ostream& sout);
-   int computedistancefield(int argc, char * argv[], std::ostream& sout);
-   int create(int argc, char * argv[], std::ostream& sout);
-   int iterate(int argc, char * argv[], std::ostream& sout);
-   int gettraj(int argc, char * argv[], std::ostream& sout);
-   int destroy(int argc, char * argv[], std::ostream& sout);
+      RegisterCommand("load", orcwrap(boost::bind(&URDFLoader::load, this, _1, _2)), "loads URDF from file");     
+    }
+    
+    virtual ~URDFLoader() {}
 
-   mod(OpenRAVE::EnvironmentBasePtr penv) : OpenRAVE::ModuleBase(penv)
-   {
-      __description = "orcdchomp: implementation chomp using libcd";
-      RegisterCommand("viewspheres",orcwrap(boost::bind(&mod::viewspheres,this,_1,_2,_3)),"view spheres");
-      RegisterCommand("computedistancefield",orcwrap(boost::bind(&mod::computedistancefield,this,_1,_2,_3)),"compute distance field");
-      RegisterCommand("create",orcwrap(boost::bind(&mod::create,this,_1,_2,_3)),"create a chomp run");
-      RegisterCommand("iterate",orcwrap(boost::bind(&mod::iterate,this,_1,_2,_3)),"create a chomp run");
-      RegisterCommand("gettraj",orcwrap(boost::bind(&mod::gettraj,this,_1,_2,_3)),"create a chomp run");
-      RegisterCommand("destroy",orcwrap(boost::bind(&mod::destroy,this,_1,_2,_3)),"create a chomp run");
-      
-      this->e = penv;
-      this->n_sdfs = 0;
-      this->sdfs = 0;
-   }
-   virtual ~mod() {}
-   void Destroy() { RAVELOG_INFO("module unloaded from environment\n"); }
-   /* This is called on e.LoadProblem(m, 'command') */
-   int main(const std::string& cmd) { RAVELOG_INFO("module init cmd: %s\n", cmd.c_str()); return 0; }
-};
-
-void run_destroy(struct run * r);
-
-struct tsr
-{
-   int manipindex;
-   char bodyandlink[32];
-   double T0w[7];
-   double Twe[7];
-   double Bw[6][2];
-};
-
-int tsr_create_parse(struct tsr ** tp, char * str);
-void tsr_destroy(struct tsr * t);
-
-} /* namespace orcdchomp */
+    void Destroy() { RAVELOG_INFO("module unloaded from environment\n"); }
+    
+    /* This is called on env.LoadProblem(m, 'command') */
+    int main(const std::string& cmd) { RAVELOG_INFO("module init cmd: %s\n", cmd.c_str()); return 0; }
+  };
+  
+} /* namespace urdf_loader */
