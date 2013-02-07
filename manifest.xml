@@ -4,6 +4,7 @@
   </description>
   <author>Pras Velagapudi</author>
   <depend package="openrave"/>
+  <depend package="urdf"/>
   <export>
     <python path="${prefix}/pythonsrc"/>
     <openrave plugins="${prefix}/lib"/>
