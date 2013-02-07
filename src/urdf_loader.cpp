@@ -84,28 +84,53 @@ namespace urdf_loader
     //
     // So, I am forced to do this.  In OpenRAVE 0.9 and above, this code should
     // probably be replaced with programmatic construction.
-    TiXmlDocument robotXml;
-    robotXml.LinkEndChild(new TiXmlDeclaration("1.0", "", ""));
+    TiXmlDocument xml;
+    xml.LinkEndChild(new TiXmlDeclaration("1.0", "", ""));
     
+    // Create a root robot node for this robot
+    TiXmlElement *robot = new TiXmlElement("Robot");
+    robot->SetAttribute("name", model.getName());
+    xml.LinkEndChild(robot);
+
+    // Create a kinbody to contain all the links and joints
+    TiXmlElement *kinBody = new TiXmlElement("KinBody");
+    robot->LinkEndChild(kinBody);
+
     // Populate vector of links
     std::string link_name; 
     boost::shared_ptr<urdf::Link> link_ptr;
     BOOST_FOREACH(boost::tie(link_name, link_ptr), model.links_) {
+
+      // Create a new link from the URDF model
+      TiXmlElement *link = new TiXmlElement("Body");
+      link->SetAttribute("name", link_name);
+      
       // TODO: fill in links
+
+      // Add link to XML
+      kinBody->LinkEndChild(link);
     }
 
     // Populate vector of joints
     std::string joint_name; 
     boost::shared_ptr<urdf::Joint> joint_ptr;
     BOOST_FOREACH(boost::tie(joint_name, joint_ptr), model.joints_) {
+
+      // Create a new joint from the URDF model
+      TiXmlElement *joint = new TiXmlElement("Joint");
+      joint->SetAttribute("name", joint_name);
+
       // TODO: fill in joints
+
+      // Add joint to XML
+      kinBody->LinkEndChild(joint);
     }
 
     // Write out the XML document to a string interface
     // (e.g. http://www.grinninglizard.com/tinyxmldocs/classTiXmlPrinter.html)
     TiXmlPrinter robotPrinter;
     robotPrinter.SetStreamPrinting();
-    robotXml.Accept(&robotPrinter);
+    xml.Accept(&robotPrinter);
     
     // Load the robot in OpenRAVE from the in-memory XML string
     _env->LoadData(robotPrinter.CStr());
