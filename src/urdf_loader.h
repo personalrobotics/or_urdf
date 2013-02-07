@@ -16,10 +16,8 @@ namespace urdf_loader
   class URDFLoader : public OpenRAVE::ModuleBase
   {
   public:
-    OpenRAVE::EnvironmentBasePtr _env; /* filled on module creation */
-    
     /** Opens a URDF file and returns a robot in OpenRAVE */
-    bool load(ostream& sout, istream& sin);
+    bool load(std::ostream& sout, std::istream& sin);
     
     /** Constructs plugin and registers functions */
     URDFLoader(OpenRAVE::EnvironmentBasePtr env) : OpenRAVE::ModuleBase(env)
@@ -27,15 +25,19 @@ namespace urdf_loader
       __description = "URDFLoader: Loader that imports URDF files.";
       _env = env;
 
-      RegisterCommand("load", orcwrap(boost::bind(&URDFLoader::load, this, _1, _2)), "loads URDF from file");     
+      RegisterCommand("load", boost::bind(&URDFLoader::load, this, _1, _2), "loads URDF from file");     
     }
     
     virtual ~URDFLoader() {}
 
-    void Destroy() { RAVELOG_INFO("module unloaded from environment\n"); }
+    void Destroy() { RAVELOG_INFO("URDF loader unloaded from environment\n"); }
     
     /* This is called on env.LoadProblem(m, 'command') */
-    int main(const std::string& cmd) { RAVELOG_INFO("module init cmd: %s\n", cmd.c_str()); return 0; }
+    int main(const std::string& cmd) { RAVELOG_INFO("URDF loader initialized with command: %s\n", cmd.c_str()); return 0; }
+
+  private:
+    /** Reference to OpenRAVE environment, filled in on construction */
+    OpenRAVE::EnvironmentBasePtr _env;
   };
   
 } /* namespace urdf_loader */

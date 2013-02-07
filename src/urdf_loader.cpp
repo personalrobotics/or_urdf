@@ -12,7 +12,7 @@ namespace urdf_loader
 {
 
   /** Opens a URDF file and returns a robot in OpenRAVE */
-  bool URDFLoader::load(ostream& sout, istream& sin);
+  bool URDFLoader::load(std::ostream& sout, std::istream& sin)
   {
     // Get filename from input arguments
 
@@ -21,6 +21,8 @@ namespace urdf_loader
     // Recursively construct robot from XML
 
     // Return reference to created object
+
+    return true;
   }
 
 } /* namespace orcdchomp */
