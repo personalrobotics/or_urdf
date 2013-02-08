@@ -5,6 +5,7 @@
   <author>Pras Velagapudi</author>
   <depend package="openrave"/>
   <depend package="urdf"/>
+  <depend package="roslib"/>
   <rosdep name="tinyxml"/>
   <export>
     <python path="${prefix}/pythonsrc"/>

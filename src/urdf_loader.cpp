@@ -13,6 +13,8 @@
 #include <boost/foreach.hpp>
 #include <boost/make_shared.hpp>
 #include <boost/format.hpp>
+#include <boost/filesystem.hpp>
+#include <ros/package.h>
 
 /** Boilerplate plugin definition for OpenRAVE */
 OpenRAVE::InterfaceBasePtr CreateInterfaceValidated(OpenRAVE::InterfaceType type, const std::string& interfacename, std::istream& sinput, OpenRAVE::EnvironmentBasePtr env)
@@ -41,38 +43,149 @@ OpenRAVE::Transform URDFPoseToRaveTransform(const urdf::Pose &pose)
 					       pose.position.z) );
 }
 
-const std::pair<std::string, bool> URDFJointTypeToRaveJointType(int type)
-{
-  switch(type) {
-  case urdf::Joint::REVOLUTE:
-    return std::pair<std::string, bool>("hinge",  true);
-  case urdf::Joint::PRISMATIC:
-    return std::pair<std::string, bool>("slider", true);
-  case urdf::Joint::FIXED:
-    return std::pair<std::string, bool>("hinge", false);
-  case urdf::Joint::PLANAR:
-  case urdf::Joint::FLOATING:
-  case urdf::Joint::CONTINUOUS:
-  case urdf::Joint::UNKNOWN:
-  default:
-    // TODO: Fill the rest of these joint types in!
-    RAVELOG_ERROR("URDFLoader : Unable to determine joint type [%d].\n", type);
-    throw OpenRAVE::openrave_exception("Failed to convert URDF joint!");
-  }
-}
-
-void makeTextElement(TiXmlElement *element, const std::string name, const std::string value)
-{
-  TiXmlElement *node = new TiXmlElement(name);  
-  node->LinkEndChild(new TiXmlText(value));  
-  element->LinkEndChild(node);
-}
-
 namespace urdf_loader
 {
+  
+  /** Resolves URIs for file:// and package:// paths */
+  const std::string resolveURI(const std::string &path)
+  {
+    std::string uri = path;
+
+    if (uri.find("file://") == 0) {
+
+      // Strip off the file://
+      uri.erase(0, strlen("file://"));
+
+      // Resolve the mesh path as a file URI
+      boost::filesystem::path file_path(uri);
+      return file_path.string();
+
+    } else if (uri.find("package://") == 0) {
+
+      // Strip off the package://
+      uri.erase(0, strlen("package://"));
+	
+      // Resolve the mesh path as a ROS package URI
+      size_t package_end = uri.find("/");
+      std::string package = uri.substr(0, package_end);
+      std::string package_path = ros::package::getPath(package);
+      
+      // Show a warning if the package was not resolved
+      if (package_path.empty())	{
+	RAVELOG_WARN("Unable to find package [%s].\n", package.c_str());
+	return "";
+      }
+      
+      // Append the remaining relative path
+      boost::filesystem::path file_path(package_path);
+      uri.erase(0, package_end);
+      file_path /= uri;
+      
+      // Return the canonical path
+      return file_path.string();
+
+    } else {
+      RAVELOG_WARN("Cannot handle mesh URI type [%s].\n");
+      return "";
+    }
+  }
+
+  const std::pair<std::string, bool> URDFJointTypeToRaveJointType(int type)
+  {
+    switch(type) {
+    case urdf::Joint::REVOLUTE:
+      return std::pair<std::string, bool>("hinge",  true);
+    case urdf::Joint::PRISMATIC:
+      return std::pair<std::string, bool>("slider", true);
+    case urdf::Joint::FIXED:
+      return std::pair<std::string, bool>("hinge", false);
+    case urdf::Joint::PLANAR:
+    case urdf::Joint::FLOATING:
+    case urdf::Joint::CONTINUOUS:
+    case urdf::Joint::UNKNOWN:
+    default:
+      // TODO: Fill the rest of these joint types in!
+      RAVELOG_ERROR("URDFLoader : Unable to determine joint type [%d].\n", type);
+      throw OpenRAVE::openrave_exception("Failed to convert URDF joint!");
+    }
+  }
+  
+  void makeTextElement(TiXmlElement *element, const std::string &name, const std::string &value)
+  {
+    TiXmlElement *node = new TiXmlElement(name);  
+    node->LinkEndChild(new TiXmlText(value));  
+    element->LinkEndChild(node);
+  }
+  
+  class Geometry {
+  public:
+    enum Type { COLLISION, RENDER };
+  };
+
+  TiXmlElement *makeGeomElement(const urdf::Geometry &geometry, Geometry::Type type)
+  {
+    TiXmlElement *node = new TiXmlElement("Geom");
+    // TODO: set a "render" attribute depending on collision or render
+
+    // Convert depending on geometry type
+    switch(geometry.type) {
+    case urdf::Geometry::SPHERE:
+      {
+	node->SetAttribute("type", "sphere");
+
+	const urdf::Sphere &sphere = dynamic_cast<const urdf::Sphere&>(geometry);
+	makeTextElement(node, "radius", boost::lexical_cast<std::string>(sphere.radius));
+      }
+      break;
+    case urdf::Geometry::BOX:
+      {
+	node->SetAttribute("type", "box");
+
+	const urdf::Box &box = dynamic_cast<const urdf::Box&>(geometry);
+	makeTextElement(node, "extents", boost::str(boost::format("%f %f %f")
+						    % box.dim.x % box.dim.y % box.dim.z ));
+      }
+      break;
+    case urdf::Geometry::CYLINDER:
+      {
+	node->SetAttribute("type", "cylinder");
+
+	const urdf::Cylinder &cylinder = dynamic_cast<const urdf::Cylinder&>(geometry);
+	makeTextElement(node, "height", boost::lexical_cast<std::string>(cylinder.length));
+	makeTextElement(node, "radius", boost::lexical_cast<std::string>(cylinder.radius));
+      }
+      break;
+    case urdf::Geometry::MESH:
+      {
+	node->SetAttribute("type", "trimesh");
+
+	const urdf::Mesh &mesh = dynamic_cast<const urdf::Mesh&>(geometry);
+	std::string mesh_filename = resolveURI(mesh.filename);
+
+	// Either create a collision or render geometry
+	switch(type) {
+	case Geometry::COLLISION:
+	  makeTextElement(node, "data", mesh_filename); // TODO: scale?
+	  break;
+	case Geometry::RENDER:
+	  makeTextElement(node, "render", mesh_filename); // TODO: scale?
+	  break;
+	default:
+	  RAVELOG_ERROR("URDFLoader : Unable to determine trimesh type [%d].\n", type);
+	  throw OpenRAVE::openrave_exception("Failed to convert URDF trimesh!");
+	}
+      }
+      break;
+    default:
+      RAVELOG_ERROR("URDFLoader : Unable to determine geometry type [%d].\n", geometry.type);
+      throw OpenRAVE::openrave_exception("Failed to convert URDF geometry!");
+    }
+    
+    return node;
+  }
 
   /** Opens a URDF file and returns a robot in OpenRAVE */
-  bool URDFLoader::load(std::ostream& soutput, std::istream& sinput)
+  bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
   {
     // Get filename from input arguments
     std::string urdf_filename;
@@ -128,7 +241,41 @@ namespace urdf_loader
 						% inertial->origin.position.x
 						% inertial->origin.position.y
 						% inertial->origin.position.z));
+	link->LinkEndChild(mass);
       }
+
+      // Set information for collision geometry
+      boost::shared_ptr<urdf::Collision> collision = link_ptr->collision;
+      if (collision) {
+	TiXmlElement *collision_geom = makeGeomElement(*(collision->geometry), Geometry::COLLISION);
+	makeTextElement(collision_geom, "translation", boost::str(boost::format("%f %f %f")
+								  % collision->origin.position.x
+								  % collision->origin.position.y
+								  % collision->origin.position.z));
+	makeTextElement(collision_geom, "quat", boost::str(boost::format("%f %f %f %f")
+							   % collision->origin.rotation.x
+							   % collision->origin.rotation.y
+							   % collision->origin.rotation.z
+							   % collision->origin.rotation.w));
+	link->LinkEndChild(collision_geom);
+      }
+
+      // Set information for rendered geometry
+      boost::shared_ptr<urdf::Visual> visual = link_ptr->visual;
+      if (visual) {
+	TiXmlElement *render_geom = makeGeomElement(*(visual->geometry), Geometry::RENDER);
+	makeTextElement(render_geom, "translation", boost::str(boost::format("%f %f %f")
+							       % visual->origin.position.x
+							       % visual->origin.position.y
+							       % visual->origin.position.z));
+	makeTextElement(render_geom, "quat", boost::str(boost::format("%f %f %f %f")
+							% visual->origin.rotation.x
+							% visual->origin.rotation.y
+							% visual->origin.rotation.z
+							% visual->origin.rotation.w));
+	link->LinkEndChild(render_geom);
+      }
+      // TODO: set material information for rendered geometry
 
       // TODO: fill in links
 
