@@ -49,6 +49,7 @@ namespace urdf_loader
   /** Resolves URIs for file:// and package:// paths */
   const std::string resolveURI(const std::string &path)
   {
+    static std::map<std::string, std::string> package_cache;
     std::string uri = path;
 
     if (uri.find("file://") == 0) {
@@ -68,7 +69,16 @@ namespace urdf_loader
       // Resolve the mesh path as a ROS package URI
       size_t package_end = uri.find("/");
       std::string package = uri.substr(0, package_end);
-      std::string package_path = ros::package::getPath(package);
+      std::string package_path;
+
+      // Use the package cache if we have resolved this package before
+      std::map<std::string, std::string>::iterator it = package_cache.find(package);
+      if (it != package_cache.end()) {
+	package_path = it->second;
+      } else {
+	package_path = ros::package::getPath(package);
+	package_cache[package] = package_path;
+      }
       
       // Show a warning if the package was not resolved
       if (package_path.empty())	{
