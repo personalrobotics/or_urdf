@@ -99,9 +99,10 @@ namespace urdf_loader
       return std::pair<std::string, bool>("slider", true);
     case urdf::Joint::FIXED:
       return std::pair<std::string, bool>("hinge", false);
+    case urdf::Joint::CONTINUOUS:
+      return std::pair<std::string, bool>("hinge",  true);
     case urdf::Joint::PLANAR:
     case urdf::Joint::FLOATING:
-    case urdf::Joint::CONTINUOUS:
     case urdf::Joint::UNKNOWN:
     default:
       // TODO: Fill the rest of these joint types in!
