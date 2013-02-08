@@ -12,6 +12,7 @@
 #include <urdf/model.h>
 #include <boost/foreach.hpp>
 #include <boost/make_shared.hpp>
+#include <boost/format.hpp>
 
 /** Boilerplate plugin definition for OpenRAVE */
 OpenRAVE::InterfaceBasePtr CreateInterfaceValidated(OpenRAVE::InterfaceType type, const std::string& interfacename, std::istream& sinput, OpenRAVE::EnvironmentBasePtr env)
@@ -40,14 +41,15 @@ OpenRAVE::Transform URDFPoseToRaveTransform(const urdf::Pose &pose)
 					       pose.position.z) );
 }
 
-OpenRAVE::KinBody::Joint::JointType URDFJointTypeToRaveJointType(int type)
+const std::pair<std::string, bool> URDFJointTypeToRaveJointType(int type)
 {
   switch(type) {
   case urdf::Joint::REVOLUTE:
-    return OpenRAVE::KinBody::Joint::JointRevolute;
+    return std::pair<std::string, bool>("hinge",  true);
   case urdf::Joint::PRISMATIC:
-    return OpenRAVE::KinBody::Joint::JointPrismatic;
+    return std::pair<std::string, bool>("slider", true);
   case urdf::Joint::FIXED:
+    return std::pair<std::string, bool>("hinge", false);
   case urdf::Joint::PLANAR:
   case urdf::Joint::FLOATING:
   case urdf::Joint::CONTINUOUS:
@@ -57,6 +59,13 @@ OpenRAVE::KinBody::Joint::JointType URDFJointTypeToRaveJointType(int type)
     RAVELOG_ERROR("URDFLoader : Unable to determine joint type [%d].\n", type);
     throw OpenRAVE::openrave_exception("Failed to convert URDF joint!");
   }
+}
+
+void makeTextElement(TiXmlElement *element, const std::string name, const std::string value)
+{
+  TiXmlElement *node = new TiXmlElement(name);  
+  node->LinkEndChild(new TiXmlText(value));  
+  element->LinkEndChild(node);
 }
 
 namespace urdf_loader
@@ -104,7 +113,23 @@ namespace urdf_loader
       // Create a new link from the URDF model
       TiXmlElement *link = new TiXmlElement("Body");
       link->SetAttribute("name", link_name);
+      link->SetAttribute("type", "dynamic");
       
+      // Set inertial parameters
+      boost::shared_ptr<urdf::Inertial> inertial = link_ptr->inertial;
+      if (inertial) {
+	TiXmlElement *mass = new TiXmlElement("Mass");
+	makeTextElement(mass, "total", boost::lexical_cast<std::string>(inertial->mass));
+	makeTextElement(mass, "inertia", boost::str(boost::format("%f %f %f %f %f %f %f %f %f")
+						    % inertial->ixx % inertial->ixy % inertial->ixz
+						    % inertial->ixy % inertial->iyy % inertial->iyz
+						    % inertial->ixz % inertial->iyz % inertial->izz));
+	makeTextElement(mass, "com", boost::str(boost::format("%f %f %f") 
+						% inertial->origin.position.x
+						% inertial->origin.position.y
+						% inertial->origin.position.z));
+      }
+
       // TODO: fill in links
 
       // Add link to XML
@@ -120,6 +145,30 @@ namespace urdf_loader
       TiXmlElement *joint = new TiXmlElement("Joint");
       joint->SetAttribute("name", joint_name);
 
+      // Set the type of joint
+      std::pair<std::string, bool> joint_params = URDFJointTypeToRaveJointType(joint_ptr->type);
+      std::string joint_type = joint_params.first;
+      bool joint_enabled = joint_params.second;
+      joint->SetAttribute("type", joint_type);
+      joint->SetAttribute("enable", (joint_enabled ? "true" : "false"));
+
+      // Connect joint to appropriate parent and child links
+      makeTextElement(joint, "Body", joint_ptr->parent_link_name);
+      makeTextElement(joint, "Body", joint_ptr->child_link_name);
+
+      // Configure joint axis (or make one up if the joint isn't enabled)
+      urdf::Vector3 axis = (joint_enabled ? joint_ptr->axis : urdf::Vector3(1.0, 0.0, 0.0));
+      makeTextElement(joint, "axis", boost::str(boost::format("%f %f %f") 
+						% axis.x % axis.y % axis.z));
+      
+      // Configure joint limits
+      boost::shared_ptr<urdf::JointLimits> limits = joint_ptr->limits;
+      if (limits) {
+	makeTextElement(joint, "maxvel", boost::lexical_cast<std::string>(limits->velocity));
+	makeTextElement(joint, "limitsrad", boost::str(boost::format("%f %f") 
+						       % limits->lower % limits->upper));
+      }
+
       // TODO: fill in joints
 
       // Add joint to XML
@@ -129,8 +178,11 @@ namespace urdf_loader
     // Write out the XML document to a string interface
     // (e.g. http://www.grinninglizard.com/tinyxmldocs/classTiXmlPrinter.html)
     TiXmlPrinter robotPrinter;
-    robotPrinter.SetStreamPrinting();
+    //    robotPrinter.SetStreamPrinting();
     xml.Accept(&robotPrinter);
+
+    // TODO: remove this debug print
+    RAVELOG_INFO("Generated: %s%\n", robotPrinter.CStr());
     
     // Load the robot in OpenRAVE from the in-memory XML string
     _env->LoadData(robotPrinter.CStr());

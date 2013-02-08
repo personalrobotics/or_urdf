@@ -5,6 +5,8 @@
  */
 
 /* (C) Copyright 2013 Carnegie Mellon University */
+#ifndef URDF_LOADER_H
+#define URDF_LOADER_H
 
 #include <openrave/openrave.h>
 #include <openrave/plugin.h>
@@ -41,3 +43,5 @@ namespace urdf_loader
   };
   
 } /* namespace urdf_loader */
+
+#endif // URDF_LOADER_H
