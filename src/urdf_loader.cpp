@@ -165,10 +165,10 @@ namespace urdf_loader
 	// Either create a collision or render geometry
 	switch(type) {
 	case Geometry::COLLISION:
-	  makeTextElement(node, "data", mesh_filename); // TODO: scale?
+	  makeTextElement(node, "Data", mesh_filename); // TODO: scale?
 	  break;
 	case Geometry::RENDER:
-	  makeTextElement(node, "render", mesh_filename); // TODO: scale?
+	  makeTextElement(node, "Render", mesh_filename); // TODO: scale?
 	  break;
 	default:
 	  RAVELOG_ERROR("URDFLoader : Unable to determine trimesh type [%d].\n", type);
