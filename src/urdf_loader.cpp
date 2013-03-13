@@ -35,9 +35,7 @@ void GetPluginAttributesValidated(OpenRAVE::PLUGININFO& info)
 namespace urdf_loader
 {
 
-  /** 
-   * Converts from URDF pose datatype to OpenRAVE pose datatype.
-   */
+  /** Converts from URDF pose datatype to OpenRAVE pose datatype. */
   OpenRAVE::Transform URDFPoseToRaveTransform(const urdf::Pose &pose)
   {
     return OpenRAVE::Transform( OpenRAVE::Vector(pose.rotation.x, 
@@ -103,6 +101,8 @@ namespace urdf_loader
     }
   }
 
+  /** Converts URDF joint to an OpenRAVE joint string and a boolean
+      representing whether the joint is moving or fixed */
   const std::pair<std::string, bool> URDFJointTypeToRaveJointType(int type)
   {
     switch(type) {
@@ -232,15 +232,55 @@ namespace urdf_loader
     TiXmlElement *kinBody = new TiXmlElement("KinBody");
     robot->LinkEndChild(kinBody);
 
-    // Populate vector of links
+    // Populate list of links from URDF model
+    std::vector< boost::shared_ptr<urdf::Link> > link_vector;
+    model.getLinks(link_vector);
+    std::list< boost::shared_ptr<urdf::Link> > link_list(link_vector.begin(), link_vector.end());
+    std::set<std::string> finished_links;
+
+    // TODO: prevent infinite loops here
+    // Iterate through all links, allowing deferred evaluation (putting links
+    // back on the list) if their parents do not exist yet
     std::string link_name; 
     boost::shared_ptr<urdf::Link> link_ptr;
-    BOOST_FOREACH(boost::tie(link_name, link_ptr), model.links_) {
+    while (!link_list.empty()) {
+      
+      // Get next element in list
+      link_ptr = link_list.front();
+      link_name = link_ptr->name;
+      link_list.pop_front();
 
       // Create a new link from the URDF model
       TiXmlElement *link = new TiXmlElement("Body");
       link->SetAttribute("name", link_name);
       link->SetAttribute("type", "dynamic");
+
+      // Set transform relative to parent link
+      // If the parent link is not defined yet, push the link back on the list
+      boost::shared_ptr<urdf::Link> parent_link = link_ptr->getParent();
+      if (parent_link) {
+	if (finished_links.find(parent_link->name) != finished_links.end()) {
+	  makeTextElement(link, "offsetfrom", parent_link->name);
+	} else {
+	  link_list.push_back(link_ptr);
+	  continue;
+	}
+      }
+
+      // TODO: is this at all reasonable?
+      // Set local transformation to be same as parent joint
+      boost::shared_ptr<urdf::Joint> parent_joint = link_ptr->parent_joint;
+      if (parent_joint) {
+	makeTextElement(link, "translation", boost::str(boost::format("%f %f %f")
+							% parent_joint->parent_to_joint_origin_transform.position.x
+							% parent_joint->parent_to_joint_origin_transform.position.y
+							% parent_joint->parent_to_joint_origin_transform.position.z));
+	makeTextElement(link, "quat", boost::str(boost::format("%f %f %f %f")
+						 % parent_joint->parent_to_joint_origin_transform.rotation.x
+						 % parent_joint->parent_to_joint_origin_transform.rotation.y
+						 % parent_joint->parent_to_joint_origin_transform.rotation.z
+						 % parent_joint->parent_to_joint_origin_transform.rotation.w));
+      }
       
       // Set inertial parameters
       boost::shared_ptr<urdf::Inertial> inertial = link_ptr->inertial;
@@ -310,6 +350,9 @@ namespace urdf_loader
 
       // Add link to XML
       kinBody->LinkEndChild(link);
+      
+      // Mark this link as completed
+      finished_links.insert(link_name);
     }
 
     // Populate vector of joints
@@ -331,6 +374,15 @@ namespace urdf_loader
       // Connect joint to appropriate parent and child links
       makeTextElement(joint, "Body", joint_ptr->parent_link_name);
       makeTextElement(joint, "Body", joint_ptr->child_link_name);
+
+      // Set joint origin to parent
+      makeTextElement(joint, "origin", joint_ptr->parent_link_name);
+
+      // Configure joint origin/anchor
+      makeTextElement(joint, "anchor", boost::str(boost::format("%f %f %f")
+						  % joint_ptr->parent_to_joint_origin_transform.position.x
+						  % joint_ptr->parent_to_joint_origin_transform.position.y
+						  % joint_ptr->parent_to_joint_origin_transform.position.z));
 
       // Configure joint axis (or make one up if the joint isn't enabled)
       urdf::Vector3 axis = (joint_enabled ? joint_ptr->axis : urdf::Vector3(1.0, 0.0, 0.0));
