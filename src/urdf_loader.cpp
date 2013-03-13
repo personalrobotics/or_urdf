@@ -32,19 +32,22 @@ void GetPluginAttributesValidated(OpenRAVE::PLUGININFO& info)
   info.interfacenames[OpenRAVE::PT_Module].push_back("URDFLoader");
 }
 
-OpenRAVE::Transform URDFPoseToRaveTransform(const urdf::Pose &pose)
-{
-  return OpenRAVE::Transform( OpenRAVE::Vector(pose.rotation.x, 
-					       pose.rotation.y, 
-					       pose.rotation.z, 
-					       pose.rotation.w),
-			      OpenRAVE::Vector(pose.position.x, 
-					       pose.position.y, 
-					       pose.position.z) );
-}
-
 namespace urdf_loader
 {
+
+  /** 
+   * Converts from URDF pose datatype to OpenRAVE pose datatype.
+   */
+  OpenRAVE::Transform URDFPoseToRaveTransform(const urdf::Pose &pose)
+  {
+    return OpenRAVE::Transform( OpenRAVE::Vector(pose.rotation.x, 
+						 pose.rotation.y, 
+						 pose.rotation.z, 
+						 pose.rotation.w),
+				OpenRAVE::Vector(pose.position.x, 
+						 pose.position.y, 
+						 pose.position.z) );
+  }
   
   /** Resolves URIs for file:// and package:// paths */
   const std::string resolveURI(const std::string &path)
@@ -284,9 +287,24 @@ namespace urdf_loader
 							% visual->origin.rotation.y
 							% visual->origin.rotation.z
 							% visual->origin.rotation.w));
+
+	// If a material color is specified, use it
+	boost::shared_ptr<urdf::Material> material = visual->material;
+	if (material) {
+	  makeTextElement(render_geom, "ambientcolor", boost::str(boost::format("%f %f %f")
+								  % material->color.r
+								  % material->color.g
+								  % material->color.b));
+	  makeTextElement(render_geom, "diffusecolor", boost::str(boost::format("%f %f %f")
+								  % material->color.r
+								  % material->color.g
+								  % material->color.b));
+	  makeTextElement(render_geom, "transparency", boost::str(boost::format("%f")
+								  % material->color.a));
+	}
+
 	link->LinkEndChild(render_geom);
       }
-      // TODO: set material information for rendered geometry
 
       // TODO: fill in links
 
