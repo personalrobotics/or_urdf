@@ -35,16 +35,16 @@ void GetPluginAttributesValidated(OpenRAVE::PLUGININFO& info)
 namespace urdf_loader
 {
 
-  /** Converts from URDF pose datatype to OpenRAVE pose datatype. */
-  OpenRAVE::Transform URDFPoseToRaveTransform(const urdf::Pose &pose)
+  /** Converts from URDF 3D vector to OpenRAVE 3D vector. */
+  OpenRAVE::Vector URDFVectorToRaveVector(const urdf::Vector3 &vector)
   {
-    return OpenRAVE::Transform( OpenRAVE::Vector(pose.rotation.x, 
-						 pose.rotation.y, 
-						 pose.rotation.z, 
-						 pose.rotation.w),
-				OpenRAVE::Vector(pose.position.x, 
-						 pose.position.y, 
-						 pose.position.z) );
+    return OpenRAVE::Vector(vector.x, vector.y, vector.z);
+  }
+
+  /** Converts from URDF 3D rotation to OpenRAVE 3D vector. */
+  OpenRAVE::Vector URDFRotationToRaveVector(const urdf::Rotation &rotation)
+  {
+    return OpenRAVE::Vector(rotation.x, rotation.y, rotation.z, rotation.w);
   }
   
   /** Resolves URIs for file:// and package:// paths */
@@ -342,8 +342,6 @@ namespace urdf_loader
 	link->LinkEndChild(render_geom);
       }
 
-      // TODO: fill in links
-
       // Add link to XML
       kinBody->LinkEndChild(link);
       
@@ -381,9 +379,23 @@ namespace urdf_loader
 						  % joint_ptr->parent_to_joint_origin_transform.position.z));
 
       // Configure joint axis (or make one up if the joint isn't enabled)
-      urdf::Vector3 axis = (joint_enabled ? joint_ptr->axis : urdf::Vector3(1.0, 0.0, 0.0));
-      makeTextElement(joint, "axis", boost::str(boost::format("%f %f %f") 
-						% axis.x % axis.y % axis.z));
+      // TODO: is this axis supposed to be rotated by joint origin?
+      {
+	// Retrieve the local axis vector from the URDF file
+	urdf::Vector3 urdf_local_axis = (joint_enabled ? joint_ptr->axis : urdf::Vector3(1.0, 0.0, 0.0));
+	OpenRAVE::Vector rave_local_axis = URDFVectorToRaveVector(urdf_local_axis);
+	
+	// Retrieve the joint origin rotation
+	urdf::Rotation urdf_joint_rotation = joint_ptr->parent_to_joint_origin_transform.rotation;
+	OpenRAVE::Vector rave_joint_rotation = URDFRotationToRaveVector(urdf_joint_rotation);
+	
+	// Rotate the raw vector around the joint origin to get the OpenRAVE axis
+	OpenRAVE::Vector axis = OpenRAVE::geometry::quatRotate(rave_joint_rotation, rave_local_axis);
+
+	// Use the rotated axis in the OpenRAVE XML file
+	makeTextElement(joint, "axis", boost::str(boost::format("%f %f %f") 
+						  % axis.x % axis.y % axis.z));
+      }
       
       // Configure joint limits
       boost::shared_ptr<urdf::JointLimits> limits = joint_ptr->limits;
@@ -392,8 +404,6 @@ namespace urdf_loader
 	makeTextElement(joint, "limitsrad", boost::str(boost::format("%f %f") 
 						       % limits->lower % limits->upper));
       }
-
-      // TODO: fill in joints
 
       // Add joint to XML
       kinBody->LinkEndChild(joint);
