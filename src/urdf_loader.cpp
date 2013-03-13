@@ -331,16 +331,12 @@ namespace urdf_loader
 	// If a material color is specified, use it
 	boost::shared_ptr<urdf::Material> material = visual->material;
 	if (material) {
-	  makeTextElement(render_geom, "ambientcolor", boost::str(boost::format("%f %f %f")
-								  % material->color.r
-								  % material->color.g
-								  % material->color.b));
 	  makeTextElement(render_geom, "diffusecolor", boost::str(boost::format("%f %f %f")
 								  % material->color.r
 								  % material->color.g
 								  % material->color.b));
 	  makeTextElement(render_geom, "transparency", boost::str(boost::format("%f")
-								  % material->color.a));
+								  % (1.0f - material->color.a)));
 	}
 
 	link->LinkEndChild(render_geom);
@@ -376,7 +372,7 @@ namespace urdf_loader
       makeTextElement(joint, "Body", joint_ptr->child_link_name);
 
       // Set joint origin to parent
-      makeTextElement(joint, "origin", joint_ptr->parent_link_name);
+      makeTextElement(joint, "offsetfrom", joint_ptr->parent_link_name);
 
       // Configure joint origin/anchor
       makeTextElement(joint, "anchor", boost::str(boost::format("%f %f %f")
