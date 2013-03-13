@@ -276,10 +276,10 @@ namespace urdf_loader
 							% parent_joint->parent_to_joint_origin_transform.position.y
 							% parent_joint->parent_to_joint_origin_transform.position.z));
 	makeTextElement(link, "quat", boost::str(boost::format("%f %f %f %f")
+						 % parent_joint->parent_to_joint_origin_transform.rotation.w
 						 % parent_joint->parent_to_joint_origin_transform.rotation.x
 						 % parent_joint->parent_to_joint_origin_transform.rotation.y
-						 % parent_joint->parent_to_joint_origin_transform.rotation.z
-						 % parent_joint->parent_to_joint_origin_transform.rotation.w));
+						 % parent_joint->parent_to_joint_origin_transform.rotation.z));
       }
       
       // Set inertial parameters
@@ -307,10 +307,10 @@ namespace urdf_loader
 								  % collision->origin.position.y
 								  % collision->origin.position.z));
 	makeTextElement(collision_geom, "quat", boost::str(boost::format("%f %f %f %f")
+							   % collision->origin.rotation.w
 							   % collision->origin.rotation.x
 							   % collision->origin.rotation.y
-							   % collision->origin.rotation.z
-							   % collision->origin.rotation.w));
+							   % collision->origin.rotation.z));
 	link->LinkEndChild(collision_geom);
       }
 
@@ -323,10 +323,10 @@ namespace urdf_loader
 							       % visual->origin.position.y
 							       % visual->origin.position.z));
 	makeTextElement(render_geom, "quat", boost::str(boost::format("%f %f %f %f")
+							% visual->origin.rotation.w
 							% visual->origin.rotation.x
 							% visual->origin.rotation.y
-							% visual->origin.rotation.z
-							% visual->origin.rotation.w));
+							% visual->origin.rotation.z));
 
 	// If a material color is specified, use it
 	boost::shared_ptr<urdf::Material> material = visual->material;
