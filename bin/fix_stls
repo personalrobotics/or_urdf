@@ -1,0 +1,20 @@
+#!/bin/bash
+#
+# Repairs binary STL files to make them smaller and easier to import
+#
+# author: Pras Velagapudi
+#
+# Usage: ./cleanup.sh [model directory]
+#
+
+# Test for a provided directory, otherwise use current directory
+if test "$1" == ""
+then
+    STL_DIR=`pwd`
+else
+    STL_DIR="$1"
+fi
+
+# Replace the 'solid' keyword that sometimes shows up at the start of
+# binary STL files, causing them to be imported incorrectly as ASCII.
+sed -i 's/^solid/MODEL/g' `find $1 -iname \*.stl`

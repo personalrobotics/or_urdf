@@ -1,6 +1,6 @@
 <package>
-  <description brief="urdf_loader">
-     urdf_loader is an OpenRAVE plugin to load URDF files directly.
+  <description brief="or_urdf">
+     or_urdf is an OpenRAVE plugin to load and convert URDF files to OpenRAVE models.
   </description>
   <author>Pras Velagapudi</author>
   <depend package="openrave"/>
