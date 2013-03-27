@@ -12,9 +12,8 @@
 #include <openrave/plugin.h>
 #include <boost/bind.hpp>
 
-namespace urdf_loader
+namespace or_urdf
 {
-
   class URDFLoader : public OpenRAVE::ModuleBase
   {
   public:
@@ -42,6 +41,6 @@ namespace urdf_loader
     OpenRAVE::EnvironmentBasePtr _env;
   };
   
-} /* namespace urdf_loader */
+} /* namespace or_urdf */
 
 #endif // URDF_LOADER_H

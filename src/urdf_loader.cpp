@@ -19,8 +19,8 @@
 /** Boilerplate plugin definition for OpenRAVE */
 OpenRAVE::InterfaceBasePtr CreateInterfaceValidated(OpenRAVE::InterfaceType type, const std::string& interfacename, std::istream& sinput, OpenRAVE::EnvironmentBasePtr env)
 {
-  if( type == OpenRAVE::PT_Module && interfacename == "urdfloader" ) {
-    return OpenRAVE::InterfaceBasePtr(new urdf_loader::URDFLoader(env));
+  if( type == OpenRAVE::PT_Module && interfacename == "urdf" ) {
+    return OpenRAVE::InterfaceBasePtr(new or_urdf::URDFLoader(env));
   } else {
     return OpenRAVE::InterfaceBasePtr();
   }
@@ -29,10 +29,10 @@ OpenRAVE::InterfaceBasePtr CreateInterfaceValidated(OpenRAVE::InterfaceType type
 /** Boilerplate plugin definition for OpenRAVE */
 void GetPluginAttributesValidated(OpenRAVE::PLUGININFO& info)
 {
-  info.interfacenames[OpenRAVE::PT_Module].push_back("URDFLoader");
+  info.interfacenames[OpenRAVE::PT_Module].push_back("URDF");
 }
 
-namespace urdf_loader
+namespace or_urdf
 {
 
   /** Converts from URDF 3D vector to OpenRAVE 3D vector. */
