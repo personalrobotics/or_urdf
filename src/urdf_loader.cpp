@@ -401,14 +401,8 @@ namespace or_urdf
     //    robotPrinter.SetStreamPrinting();
     xml.Accept(&robotPrinter);
 
-    // TODO: remove this debug print
-    RAVELOG_INFO("Generated: %s%\n", robotPrinter.CStr());
-    
-    // Load the robot in OpenRAVE from the in-memory XML string
-    _env->LoadData(robotPrinter.CStr());
-
-    // Return reference to created object
-    // TODO: return object somehow?
+    std::string const kinbody_xml = robotPrinter.CStr();
+    soutput << kinbody_xml;
     return true;
   }
 
