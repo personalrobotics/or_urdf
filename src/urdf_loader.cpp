@@ -379,7 +379,9 @@ namespace or_urdf
 						  % joint_ptr->parent_to_joint_origin_transform.position.z));
 
       // Configure joint axis (or make one up if the joint isn't enabled)
-      urdf::Vector3 axis = (joint_enabled ? joint_ptr->axis : urdf::Vector3(1.0, 0.0, 0.0));
+      urdf::Vector3 axis = (joint_enabled 
+                            ? joint_ptr->parent_to_joint_origin_transform.rotation * joint_ptr->axis 
+                            : urdf::Vector3(1.0, 0.0, 0.0));
       makeTextElement(joint, "axis", boost::str(boost::format("%f %f %f") 
 						% axis.x % axis.y % axis.z));
       
