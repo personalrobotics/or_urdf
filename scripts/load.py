@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 PACKAGE = 'or_urdf'
+import roslib; roslib.load_manifest(PACKAGE)
 import argparse, openravepy, os, rospkg, sys
 ros_pack = rospkg.RosPack()
 
