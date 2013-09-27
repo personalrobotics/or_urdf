@@ -223,14 +223,10 @@ namespace or_urdf
     TiXmlDocument xml;
     xml.LinkEndChild(new TiXmlDeclaration("1.0", "", ""));
     
-    // Create a root robot node for this robot
-    TiXmlElement *robot = new TiXmlElement("Robot");
-    robot->SetAttribute("name", model.getName());
-    xml.LinkEndChild(robot);
-
+ 
     // Create a kinbody to contain all the links and joints
     TiXmlElement *kinBody = new TiXmlElement("KinBody");
-    robot->LinkEndChild(kinBody);
+    xml.LinkEndChild(kinBody);
 
     // Populate list of links from URDF model
     std::vector< boost::shared_ptr<urdf::Link> > link_vector;
