@@ -7,6 +7,7 @@
 /* (C) Copyright 2013 Carnegie Mellon University */
 
 #include "urdf_loader.h"
+#include "urdf_yaml_helpers.h"
 
 #include <tinyxml.h>
 #include <urdf/model.h>
@@ -15,6 +16,7 @@
 #include <boost/format.hpp>
 #include <boost/filesystem.hpp>
 #include <ros/package.h>
+#include <yaml-cpp/yaml.h>
 
 /** Boilerplate plugin definition for OpenRAVE */
 OpenRAVE::InterfaceBasePtr CreateInterfaceValidated(OpenRAVE::InterfaceType type, const std::string& interfacename, std::istream& sinput, OpenRAVE::EnvironmentBasePtr env)
@@ -348,7 +350,37 @@ namespace or_urdf
     // Populate vector of joints
     std::string joint_name; 
     boost::shared_ptr<urdf::Joint> joint_ptr;
+
+    // Parse the yaml file
+    std::string urdf_package_path = ros::package::getPath("or_urdf");
+    std::ifstream fin(urdf_package_path.append("/config/joint_order.yaml").c_str());
+    YAML::Parser parser(fin);
+    YAML::Node doc;
+    parser.GetNextDocument(doc);
+    const YAML::Node *joints = doc.FindValue("joints");
+    std::map<std::string, int> jmap;
+    if(joints){
+        *joints >> jmap;
+    }
+
+    // Now create an ordered list of the joints
+    std::vector<boost::shared_ptr<urdf::Joint> > ordered_joints;
+    ordered_joints.resize(jmap.size());
+
     BOOST_FOREACH(boost::tie(joint_name, joint_ptr), model.joints_) {
+        std::map<std::string, int>::iterator it = jmap.find(joint_name);
+
+        // Add the joint to the appropriate point in the list
+        if(it != jmap.end()){
+            ordered_joints[it->second] = joint_ptr;
+        }else{
+            ordered_joints.push_back(joint_ptr);
+        }
+    }
+
+    BOOST_FOREACH(boost::shared_ptr<urdf::Joint> joint_ptr, ordered_joints){
+
+        std::string joint_name = joint_ptr->name;
 
       // Create a new joint from the URDF model
       TiXmlElement *joint = new TiXmlElement("Joint");

@@ -9,3 +9,4 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 rosbuild_add_library(orurdf 
   src/urdf_loader.cpp 
 )
+target_link_libraries(orurdf yaml-cpp)

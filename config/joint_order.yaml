@@ -1,0 +1,67 @@
+joints:
+    -   name: /right/j1
+        index: 0
+    -   name: /right/j2
+        index: 1
+    -   name: /right/j3
+        index: 2
+    -   name: /right/j4
+        index: 3
+    -   name: /right/j5
+        index: 4
+    -   name: /right/j6
+        index: 5
+    -   name: /right/j7
+        index: 6
+    -   name: /right/j01
+        index: 7
+    -   name: /right/j11
+        index: 8
+    -   name: /right/j21
+        index: 9
+    -   name: /right/j00
+        index: 10
+    -   name: /left/j1
+        index: 11
+    -   name: /left/j2
+        index: 12
+    -   name: /left/j3
+        index: 13
+    -   name: /left/j4
+        index: 14
+    -   name: /left/j5
+        index: 15
+    -   name: /left/j6
+        index: 16
+    -   name: /left/j7
+        index: 17
+    -   name: /left/j01
+        index: 18
+    -   name: /left/j11
+        index: 19
+    -   name: /left/j21
+        index: 20
+    -   name: /left/j00
+        index: 21
+    -   name: /head/wam1
+        index: 22
+    -   name: /head/wam2
+        index: 23
+    -   name: /left/j02
+        index: 24
+    -   name: /left/j12
+        index: 25
+    -   name: /left/j22
+        index: 26
+    -   name: /left/j10
+        index: 27
+    -   name: /right/j02
+        index: 28
+    -   name: /right/j12
+        index: 29
+    -   name: /right/j22
+        index: 30
+    -   name: /right/j10
+        index: 31
+
+    
