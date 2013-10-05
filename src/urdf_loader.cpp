@@ -224,10 +224,10 @@ namespace or_urdf
     // probably be replaced with programmatic construction.
     TiXmlDocument xml;
     xml.LinkEndChild(new TiXmlDeclaration("1.0", "", ""));
-    
  
     // Create a kinbody to contain all the links and joints
     TiXmlElement *kinBody = new TiXmlElement("KinBody");
+    kinBody->SetAttribute("name", model.getName());
     xml.LinkEndChild(kinBody);
 
     // Populate list of links from URDF model
