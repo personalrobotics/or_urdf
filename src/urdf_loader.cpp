@@ -393,6 +393,15 @@ namespace or_urdf
       joint->SetAttribute("type", joint_type);
       joint->SetAttribute("enable", (joint_enabled ? "true" : "false"));
 
+      boost::shared_ptr<urdf::JointMimic> mimic = joint_ptr->mimic;
+      if(mimic){
+          joint->SetAttribute("mimic_pos", 
+                              boost::str(boost::format("%s*%0.6f+%0.6f") % 
+                                         mimic->joint_name % mimic->multiplier % mimic->offset));
+          joint->SetAttribute("mimic_vel", 
+                              boost::str(boost::format("|%s %0.6f") % mimic->joint_name % mimic->multiplier));
+      }
+
       // Connect joint to appropriate parent and child links
       makeTextElement(joint, "Body", joint_ptr->parent_link_name);
       makeTextElement(joint, "Body", joint_ptr->child_link_name);
