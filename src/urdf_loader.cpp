@@ -428,12 +428,6 @@ namespace or_urdf
 	makeTextElement(joint, "maxvel", boost::lexical_cast<std::string>(limits->velocity));
 	makeTextElement(joint, "limitsrad", boost::str(boost::format("%f %f") 
 						       % limits->lower % limits->upper));
-
-	// Set the initial joint value if the default value (zero) is outside of joint limits.
-	if (!(limits->lower <= 0 && 0 <= limits->upper)) {
-		makeTextElement(joint, "initial", boost::str(boost::format("%f") % limits->lower));
-	}
-
       }
 
       // Add joint to XML
