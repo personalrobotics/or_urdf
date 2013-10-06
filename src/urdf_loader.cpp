@@ -434,6 +434,14 @@ namespace or_urdf
       kinBody->LinkEndChild(joint);
     }
 
+    // Output link adjacencies.
+    YAML::Node const &adjacent_yaml = doc["adjacent"];
+    for (size_t i = 0; i < adjacent_yaml.size(); ++i) {
+        std::string const link1 = adjacent_yaml[i][0].to<std::string>();
+        std::string const link2 = adjacent_yaml[i][1].to<std::string>();
+        makeTextElement(kinBody, "Adjacent", link1 + " " + link2);
+    }
+
     // Write out the XML document to a string interface
     // (e.g. http://www.grinninglizard.com/tinyxmldocs/classTiXmlPrinter.html)
     TiXmlPrinter robotPrinter;
