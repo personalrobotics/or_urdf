@@ -8,6 +8,7 @@ parser = argparse.ArgumentParser(description='loads a URDF model into OpenRAVE')
 parser.add_argument('input_path', type=str, help='path to the URDF file')
 parser.add_argument('output_path', type=str, nargs='?', help='output path for the KinBody file')
 parser.add_argument('-i', '--interactive', action='store_true', help='display the model in an OpenRAVE viewer')
+parser.add_argument('-c', '--config', type=str, action='store', help='config file for urdf generation')
 args = parser.parse_args()
 
 # Add the or_urdf plugin to the OPENRAVE_PLUGINS path.
@@ -25,7 +26,7 @@ if plugin is None:
 
 # Generate the KinBody XML.
 try:
-    kinbody_xml = plugin.SendCommand('load {0:s}'.format(args.input_path))
+    kinbody_xml = plugin.SendCommand('load {0:s} {1:s}'.format(args.input_path, args.config))
     if kinbody_xml is None:
         raise openravepy.openrave_exception('An unknown error has occurred.')
 except openravepy.openrave_exception, e:

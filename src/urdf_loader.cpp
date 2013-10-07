@@ -206,6 +206,14 @@ namespace or_urdf
     // Get filename from input arguments
     std::string urdf_filename;
     sinput >> urdf_filename;
+
+    RAVELOG_INFO("URDFLoader : URDF file %s \n", urdf_filename.c_str());
+
+    // Get the config file from input arguments
+    std::string config_filename;
+    sinput >> config_filename;
+
+    RAVELOG_INFO("URDFLoader : config file length %d : %s \n", config_filename.length(), config_filename.c_str());
     
     // Parse file via URDF reader
     urdf::Model model;
@@ -352,31 +360,38 @@ namespace or_urdf
     boost::shared_ptr<urdf::Joint> joint_ptr;
 
     // Parse the yaml file
-    std::string urdf_package_path = ros::package::getPath("or_urdf");
-    std::ifstream fin(urdf_package_path.append("/config/joint_order.yaml").c_str());
-    YAML::Parser parser(fin);
     YAML::Node doc;
-    parser.GetNextDocument(doc);
-    const YAML::Node *joints = doc.FindValue("joints");
-    std::map<std::string, int> jmap;
-    if(joints){
-        *joints >> jmap;
-    }
-
-    // Now create an ordered list of the joints
     std::vector<boost::shared_ptr<urdf::Joint> > ordered_joints;
-    ordered_joints.resize(jmap.size());
+    
+    std::ifstream fin(config_filename.c_str());
+    if(fin.is_open()){
+        YAML::Parser parser(fin);
+        parser.GetNextDocument(doc);
+        const YAML::Node *joints = doc.FindValue("joints");
+        std::map<std::string, int> jmap;
+        if(joints){
+            *joints >> jmap;
+        }
 
-    BOOST_FOREACH(boost::tie(joint_name, joint_ptr), model.joints_) {
-        std::map<std::string, int>::iterator it = jmap.find(joint_name);
-
-        // Add the joint to the appropriate point in the list
-        if(it != jmap.end()){
-            ordered_joints[it->second] = joint_ptr;
-        }else{
+        // Now create an ordered list of the joints
+        ordered_joints.resize(jmap.size());
+        BOOST_FOREACH(boost::tie(joint_name, joint_ptr), model.joints_) {
+            std::map<std::string, int>::iterator it = jmap.find(joint_name);
+            
+            // Add the joint to the appropriate point in the list
+            if(it != jmap.end()){
+                ordered_joints[it->second] = joint_ptr;
+            }else{
+                ordered_joints.push_back(joint_ptr);
+            }
+        }
+    }else{
+        // Just make the ordered joints the model joints
+        BOOST_FOREACH(boost::tie(joint_name, joint_ptr), model.joints_) {
             ordered_joints.push_back(joint_ptr);
         }
     }
+
 
     BOOST_FOREACH(boost::shared_ptr<urdf::Joint> joint_ptr, ordered_joints){
 
@@ -435,11 +450,13 @@ namespace or_urdf
     }
 
     // Output link adjacencies.
-    YAML::Node const &adjacent_yaml = doc["adjacent"];
-    for (size_t i = 0; i < adjacent_yaml.size(); ++i) {
-        std::string const link1 = adjacent_yaml[i][0].to<std::string>();
-        std::string const link2 = adjacent_yaml[i][1].to<std::string>();
-        makeTextElement(kinBody, "Adjacent", link1 + " " + link2);
+    if(fin.is_open()){
+        YAML::Node const &adjacent_yaml = doc["adjacent"];
+        for (size_t i = 0; i < adjacent_yaml.size(); ++i) {
+            std::string const link1 = adjacent_yaml[i][0].to<std::string>();
+            std::string const link2 = adjacent_yaml[i][1].to<std::string>();
+            makeTextElement(kinBody, "Adjacent", link1 + " " + link2);
+        }
     }
 
     // Write out the XML document to a string interface
