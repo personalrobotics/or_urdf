@@ -207,14 +207,10 @@ namespace or_urdf
     std::string urdf_filename;
     sinput >> urdf_filename;
 
-    RAVELOG_INFO("URDFLoader : URDF file %s \n", urdf_filename.c_str());
-
     // Get the config file from input arguments
     std::string config_filename;
     sinput >> config_filename;
 
-    RAVELOG_INFO("URDFLoader : config file length %d : %s \n", config_filename.length(), config_filename.c_str());
-    
     // Parse file via URDF reader
     urdf::Model model;
     if (!model.initFile(urdf_filename)) {
