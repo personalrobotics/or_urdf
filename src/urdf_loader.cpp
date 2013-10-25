@@ -8,6 +8,7 @@
 
 #include "urdf_loader.h"
 #include "urdf_yaml_helpers.h"
+#include "boostfs_helpers.h"
 
 #include <tinyxml.h>
 #include <urdf/model.h>
@@ -34,9 +35,14 @@ void GetPluginAttributesValidated(OpenRAVE::PLUGININFO& info)
   info.interfacenames[OpenRAVE::PT_Module].push_back("URDF");
 }
 
+/** Boilerplate plugin definition for OpenRAVE */
+void DestroyPlugin()
+{
+  // Nothing to clean up!
+}
+
 namespace or_urdf
 {
-
   /** Converts from URDF 3D vector to OpenRAVE 3D vector. */
   OpenRAVE::Vector URDFVectorToRaveVector(const urdf::Vector3 &vector)
   {
@@ -138,6 +144,9 @@ namespace or_urdf
     enum Type { COLLISION, RENDER };
   };
 
+  /** Static empty mesh (used as placeholder when no geometry exists) */
+  static const std::string empty_filename = resolveURI("package://or_urdf/empty.iv");
+
   TiXmlElement *makeGeomElement(const urdf::Geometry &geometry, Geometry::Type type)
   {
     TiXmlElement *node = new TiXmlElement("Geom");
@@ -173,18 +182,20 @@ namespace or_urdf
       break;
     case urdf::Geometry::MESH:
       {
-	node->SetAttribute("type", "trimesh");
-
 	const urdf::Mesh &mesh = dynamic_cast<const urdf::Mesh&>(geometry);
 	std::string mesh_filename = resolveURI(mesh.filename);
 
 	// Either create a collision or render geometry
 	switch(type) {
 	case Geometry::COLLISION:
-	  makeTextElement(node, "Data", mesh_filename); // TODO: scale?
+          node->SetAttribute("type", "trimesh");
+          node->SetAttribute("render", "false");
+       	  makeTextElement(node, "Data", mesh_filename);
 	  break;
 	case Geometry::RENDER:
-	  makeTextElement(node, "Render", mesh_filename); // TODO: scale?
+          node->SetAttribute("type", "sphere");
+          makeTextElement(node, "radius", "0.0");
+	  makeTextElement(node, "Render", mesh_filename);
 	  break;
 	default:
 	  RAVELOG_ERROR("URDFLoader : Unable to determine trimesh type [%d].\n", type);
@@ -389,10 +400,9 @@ namespace or_urdf
     }
 
 
-    BOOST_FOREACH(boost::shared_ptr<urdf::Joint> joint_ptr, ordered_joints){
-
-        std::string joint_name = joint_ptr->name;
-
+    BOOST_FOREACH(boost::shared_ptr<urdf::Joint> joint_ptr, ordered_joints) {
+      std::string joint_name = joint_ptr->name;
+      
       // Create a new joint from the URDF model
       TiXmlElement *joint = new TiXmlElement("Joint");
       joint->SetAttribute("name", joint_name);
@@ -405,12 +415,12 @@ namespace or_urdf
       joint->SetAttribute("enable", (joint_enabled ? "true" : "false"));
 
       boost::shared_ptr<urdf::JointMimic> mimic = joint_ptr->mimic;
-      if(mimic){
-          joint->SetAttribute("mimic_pos", 
-                              boost::str(boost::format("%s*%0.6f+%0.6f") % 
-                                         mimic->joint_name % mimic->multiplier % mimic->offset));
-          joint->SetAttribute("mimic_vel", 
-                              boost::str(boost::format("|%s %0.6f") % mimic->joint_name % mimic->multiplier));
+      if(mimic) {
+        joint->SetAttribute("mimic_pos", 
+                            boost::str(boost::format("%s*%0.6f+%0.6f") % 
+                                       mimic->joint_name % mimic->multiplier % mimic->offset));
+        joint->SetAttribute("mimic_vel", 
+                            boost::str(boost::format("|%s %0.6f") % mimic->joint_name % mimic->multiplier));
       }
 
       // Connect joint to appropriate parent and child links
