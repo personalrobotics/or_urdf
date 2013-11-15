@@ -54,6 +54,17 @@ namespace or_urdf
   {
     return OpenRAVE::Vector(rotation.x, rotation.y, rotation.z, rotation.w);
   }
+
+  OpenRAVE::Vector URDFColorToRaveVector(const urdf::Color &color)
+  {
+    return OpenRAVE::Vector(color.r, color.g, color.b, color.a);
+  }
+
+  OpenRAVE::Transform URDFPoseToRaveTransform(const urdf::Pose &pose)
+  {
+    return OpenRAVE::Transform(URDFRotationToRaveVector(pose.rotation),
+                               URDFVectorToRaveVector(pose.position));
+  }
   
   /** Resolves URIs for file:// and package:// paths */
   const std::string resolveURI(const std::string &path)
@@ -111,17 +122,17 @@ namespace or_urdf
 
   /** Converts URDF joint to an OpenRAVE joint string and a boolean
       representing whether the joint is moving or fixed */
-  const std::pair<std::string, bool> URDFJointTypeToRaveJointType(int type)
+  const std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int type)
   {
     switch(type) {
     case urdf::Joint::REVOLUTE:
-      return std::pair<std::string, bool>("hinge",  true);
+      return std::make_pair(OpenRAVE::KinBody::JointRevolute, true);
     case urdf::Joint::PRISMATIC:
-      return std::pair<std::string, bool>("slider", true);
+      return std::make_pair(OpenRAVE::KinBody::JointSlider, true);
     case urdf::Joint::FIXED:
-      return std::pair<std::string, bool>("hinge", false);
+      return std::make_pair(OpenRAVE::KinBody::JointHinge, false);
     case urdf::Joint::CONTINUOUS:
-      return std::pair<std::string, bool>("hinge",  true);
+      return std::make_pair(OpenRAVE::KinBody::JointHinge, true);
     case urdf::Joint::PLANAR:
     case urdf::Joint::FLOATING:
     case urdf::Joint::UNKNOWN:
@@ -229,22 +240,6 @@ namespace or_urdf
       throw OpenRAVE::openrave_exception("Failed to open URDF file!");
     }
 
-    // Create new XML document internally
-    //
-    // NOTE: Some of you may ask, "Why are you making an XML string in here? You
-    // have already parsed the URDF."  Well children, OpenRAVE 0.8 and earlier
-    // seem to have no other mechanism for creating kinbodies with joints and links.
-    //
-    // So, I am forced to do this.  In OpenRAVE 0.9 and above, this code should
-    // probably be replaced with programmatic construction.
-    TiXmlDocument xml;
-    xml.LinkEndChild(new TiXmlDeclaration("1.0", "", ""));
- 
-    // Create a kinbody to contain all the links and joints
-    TiXmlElement *kinBody = new TiXmlElement("KinBody");
-    kinBody->SetAttribute("name", model.getName());
-    xml.LinkEndChild(kinBody);
-
     // Populate list of links from URDF model
     std::vector< boost::shared_ptr<urdf::Link> > link_vector;
     model.getLinks(link_vector);
@@ -256,110 +251,115 @@ namespace or_urdf
     // back on the list) if their parents do not exist yet
     std::string link_name; 
     boost::shared_ptr<urdf::Link> link_ptr;
+
+    std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos;
     while (!link_list.empty()) {
-      
       // Get next element in list
       link_ptr = link_list.front();
-      link_name = link_ptr->name;
       link_list.pop_front();
 
-      // Create a new link from the URDF model
-      TiXmlElement *link = new TiXmlElement("Body");
-      link->SetAttribute("name", link_name);
-      link->SetAttribute("type", "dynamic");
+      OpenRAVE::KinBody::LinkInfoPtr link_info = boost::make_shared<OpenRAVE::KinBody::LinkInfo>();
 
-      // Set transform relative to parent link
-      // If the parent link is not defined yet, push the link back on the list
-      boost::shared_ptr<urdf::Link> parent_link = link_ptr->getParent();
-      if (parent_link) {
-	if (finished_links.find(parent_link->name) != finished_links.end()) {
-	  makeTextElement(link, "offsetfrom", parent_link->name);
-	} else {
-	  link_list.push_back(link_ptr);
-	  continue;
-	}
-      }
+      link_info->_name = link_ptr->name;
+      // TODO: Set "type" to "dynamic".
 
       // TODO: is this at all reasonable?
       // Set local transformation to be same as parent joint
       boost::shared_ptr<urdf::Joint> parent_joint = link_ptr->parent_joint;
       if (parent_joint) {
-	makeTextElement(link, "translation", boost::str(boost::format("%f %f %f")
-							% parent_joint->parent_to_joint_origin_transform.position.x
-							% parent_joint->parent_to_joint_origin_transform.position.y
-							% parent_joint->parent_to_joint_origin_transform.position.z));
-	makeTextElement(link, "quat", boost::str(boost::format("%f %f %f %f")
-						 % parent_joint->parent_to_joint_origin_transform.rotation.w
-						 % parent_joint->parent_to_joint_origin_transform.rotation.x
-						 % parent_joint->parent_to_joint_origin_transform.rotation.y
-						 % parent_joint->parent_to_joint_origin_transform.rotation.z));
+        link_info->_t = URDFPoseToRaveTransform(parent_joint->parent_to_joint_origin_transform);
       }
       
       // Set inertial parameters
       boost::shared_ptr<urdf::Inertial> inertial = link_ptr->inertial;
       if (inertial) {
-	TiXmlElement *mass = new TiXmlElement("Mass");
-	makeTextElement(mass, "total", boost::lexical_cast<std::string>(inertial->mass));
-	makeTextElement(mass, "inertia", boost::str(boost::format("%f %f %f %f %f %f %f %f %f")
-						    % inertial->ixx % inertial->ixy % inertial->ixz
-						    % inertial->ixy % inertial->iyy % inertial->iyz
-						    % inertial->ixz % inertial->iyz % inertial->izz));
-	makeTextElement(mass, "com", boost::str(boost::format("%f %f %f") 
-						% inertial->origin.position.x
-						% inertial->origin.position.y
-						% inertial->origin.position.z));
-	link->LinkEndChild(mass);
+        // XXX: We should also specify the off-diagonal terms (ixy, iyz, ixz)
+        // of the inertia tensor. We can do this in KinBody XML files, but I
+        // cannot figure out how to do so through this API.
+        link_info->_mass = inertial->mass;
+        link_info->_tMassFrame = URDFPoseToRaveTransform(inertial->origin);
+        link_info->_vinertiamoments = OpenRAVE::Vector(inertial->ixx, inertial->iyy, inertial->izz);
       }
 
       // Set information for collision geometry
+      //link_info->_vgeometryinfos
       boost::shared_ptr<urdf::Collision> collision = link_ptr->collision;
       if (collision) {
-	TiXmlElement *collision_geom = makeGeomElement(*(collision->geometry), Geometry::COLLISION);
-	makeTextElement(collision_geom, "translation", boost::str(boost::format("%f %f %f")
-								  % collision->origin.position.x
-								  % collision->origin.position.y
-								  % collision->origin.position.z));
-	makeTextElement(collision_geom, "quat", boost::str(boost::format("%f %f %f %f")
-							   % collision->origin.rotation.w
-							   % collision->origin.rotation.x
-							   % collision->origin.rotation.y
-							   % collision->origin.rotation.z));
-	link->LinkEndChild(collision_geom);
+        OpenRAVE::KinBody::GeometryInfoPtr geom_info = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>();
+
+        geom_info->_t = URDFPoseToRaveTransform(collision->origin);
+        geom_info->_fTransparency = 0;
+        geom_info->_bVisible = false;
+        geom_info->_bModifiable = false;
+
+        switch (collision->geometry->type) {
+        case urdf::Geometry::MESH: {
+            const urdf::Mesh &mesh = dynamic_cast<const urdf::Mesh&>(*collision->geometry);
+            geom_info->_filenamecollision = resolveURI(mesh.filename);
+            geom_info->_type = OpenRAVE::GT_TriMesh;
+            geom_info->_vRenderScale = OpenRAVE::Vector(1.0, 1.0, 1.0);
+
+            boost::shared_ptr<OpenRAVE::TriMesh> trimesh = boost::make_shared<OpenRAVE::TriMesh>();
+            trimesh = GetEnv()->ReadTrimeshURI(trimesh, geom_info->_filenamecollision);
+            geom_info->_meshcollision = *trimesh;
+            break;
+        }
+
+        case urdf::Geometry::SPHERE: {
+            const urdf::Sphere &sphere = dynamic_cast<const urdf::Sphere&>(*collision->geometry);
+            geom_info->_vGeomData = sphere.radius * OpenRAVE::Vector(1, 1, 1);
+            geom_info->_type = OpenRAVE::GT_Sphere;
+            break;
+        }
+
+        case urdf::Geometry::BOX:
+        case urdf::Geometry::CYLINDER:
+            RAVELOG_ERROR("Geometry type is not implemented.\n");
+            break;
+        }
+
+        link_info->_vgeometryinfos.push_back(geom_info);
       }
 
       // Set information for rendered geometry
       boost::shared_ptr<urdf::Visual> visual = link_ptr->visual;
       if (visual) {
-	TiXmlElement *render_geom = makeGeomElement(*(visual->geometry), Geometry::RENDER);
-	makeTextElement(render_geom, "translation", boost::str(boost::format("%f %f %f")
-							       % visual->origin.position.x
-							       % visual->origin.position.y
-							       % visual->origin.position.z));
-	makeTextElement(render_geom, "quat", boost::str(boost::format("%f %f %f %f")
-							% visual->origin.rotation.w
-							% visual->origin.rotation.x
-							% visual->origin.rotation.y
-							% visual->origin.rotation.z));
+        OpenRAVE::KinBody::GeometryInfoPtr geom_info = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>();
+        geom_info->_t = URDFPoseToRaveTransform(collision->origin);
+        geom_info->_type = OpenRAVE::GT_Sphere;
+        geom_info->_vGeomData = OpenRAVE::Vector(0.0, 0.0, 0.0);
+        geom_info->_fTransparency = 0;
+        geom_info->_bModifiable = false;
+        geom_info->_bVisible = true;
 
-	// If a material color is specified, use it
-	boost::shared_ptr<urdf::Material> material = visual->material;
-	if (material) {
-	  makeTextElement(render_geom, "diffusecolor", boost::str(boost::format("%f %f %f")
-								  % material->color.r
-								  % material->color.g
-								  % material->color.b));
-	  makeTextElement(render_geom, "transparency", boost::str(boost::format("%f")
-								  % (1.0f - material->color.a)));
-	}
+        // TODO: Load the actual geometry.
+        switch (visual->geometry->type) {
+        case urdf::Geometry::MESH: {
+            const urdf::Mesh &mesh = dynamic_cast<const urdf::Mesh&>(*visual->geometry);
+            geom_info->_filenamerender = resolveURI(mesh.filename);
+            geom_info->_vRenderScale = OpenRAVE::Vector(1.0, 1.0, 1.0);
+            std::cout << "render " << geom_info->_filenamerender << std::endl;
+            break;
+        }
 
-	link->LinkEndChild(render_geom);
+        case urdf::Geometry::SPHERE:
+        case urdf::Geometry::BOX:
+        case urdf::Geometry::CYLINDER:
+            RAVELOG_WARN("Only trimeshes may be used as visual geometry.\n");
+            break;
+        }
+
+        // If a material color is specified, use it
+        boost::shared_ptr<urdf::Material> material = visual->material;
+        if (material) {
+            geom_info->_vDiffuseColor = URDFColorToRaveVector(material->color);
+            geom_info->_vAmbientColor = URDFColorToRaveVector(material->color);
+        }
+        link_info->_vgeometryinfos.push_back(geom_info);
       }
-
-      // Add link to XML
-      kinBody->LinkEndChild(link);
       
       // Mark this link as completed
-      finished_links.insert(link_name);
+      link_infos.push_back(link_info);
     }
 
     // Populate vector of joints
@@ -399,63 +399,64 @@ namespace or_urdf
         }
     }
 
-
+    std::vector<OpenRAVE::KinBody::JointInfoConstPtr> joint_infos;
     BOOST_FOREACH(boost::shared_ptr<urdf::Joint> joint_ptr, ordered_joints) {
-      std::string joint_name = joint_ptr->name;
-      
-      // Create a new joint from the URDF model
-      TiXmlElement *joint = new TiXmlElement("Joint");
-      joint->SetAttribute("name", joint_name);
+      OpenRAVE::KinBody::JointInfoPtr joint_info = boost::make_shared<OpenRAVE::KinBody::JointInfo>();
+      joint_info->_name = joint_ptr->name;
+      joint_info->_linkname0 = joint_ptr->parent_link_name;
+      joint_info->_linkname1 = joint_ptr->child_link_name;
+      joint_info->_vanchor = URDFVectorToRaveVector(joint_ptr->parent_to_joint_origin_transform.position);
+      // XXX: What about offsetfrom in the KinBody XML?
 
-      // Set the type of joint
-      std::pair<std::string, bool> joint_params = URDFJointTypeToRaveJointType(joint_ptr->type);
-      std::string joint_type = joint_params.first;
-      bool joint_enabled = joint_params.second;
-      joint->SetAttribute("type", joint_type);
-      joint->SetAttribute("enable", (joint_enabled ? "true" : "false"));
+      // Set the joint type. Some URDF joints correspond to disabled OpenRAVE
+      // joints, so we'll appropriately set the corresponding IsActive flag.
+      OpenRAVE::KinBody::JointType joint_type;
+      bool is_fixed;
+      boost::tie(joint_type, is_fixed) = URDFJointTypeToRaveJointType(joint_ptr->type);
+      joint_info->_type = joint_type;
+      joint_info->_bIsActive = !is_fixed;
 
+
+      // URDF only supports linear mimic joints with a constant offset. We map
+      // that into the correct position (index 0) and velocity (index 1)
+      // equations for OpenRAVE.
+#if 0
       boost::shared_ptr<urdf::JointMimic> mimic = joint_ptr->mimic;
-      if(mimic) {
-        joint->SetAttribute("mimic_pos", 
-                            boost::str(boost::format("%s*%0.6f+%0.6f") % 
-                                       mimic->joint_name % mimic->multiplier % mimic->offset));
-        joint->SetAttribute("mimic_vel", 
-                            boost::str(boost::format("|%s %0.6f") % mimic->joint_name % mimic->multiplier));
+      if (mimic) {
+        joint_info->_vmimic[0]->_equations[0] = boost::str(boost::format("%s*%0.6f+%0.6f")
+                                                  % mimic->joint_name % mimic->multiplier % mimic->offset);
+        joint_info->_vmimic[0]->_equations[1] = boost::str(boost::format("|%s %0.6f")
+                                                  % mimic->joint_name % mimic->multiplier);
+        joint_info->_vmimic[0]->_equations[2] = "0";
       }
+#endif
 
-      // Connect joint to appropriate parent and child links
-      makeTextElement(joint, "Body", joint_ptr->parent_link_name);
-      makeTextElement(joint, "Body", joint_ptr->child_link_name);
-
-      // Set joint origin to parent
-      makeTextElement(joint, "offsetfrom", joint_ptr->parent_link_name);
-
-      // Configure joint origin/anchor
-      makeTextElement(joint, "anchor", boost::str(boost::format("%f %f %f")
-						  % joint_ptr->parent_to_joint_origin_transform.position.x
-						  % joint_ptr->parent_to_joint_origin_transform.position.y
-						  % joint_ptr->parent_to_joint_origin_transform.position.z));
-
-      // Configure joint axis (or make one up if the joint isn't enabled)
-      urdf::Vector3 axis = (joint_enabled 
-                            ? joint_ptr->parent_to_joint_origin_transform.rotation * joint_ptr->axis 
-                            : urdf::Vector3(1.0, 0.0, 0.0));
-      makeTextElement(joint, "axis", boost::str(boost::format("%f %f %f") 
-						% axis.x % axis.y % axis.z));
+      // Configure joint axis. Add an arbitrary axis if the joint is disabled.
+      urdf::Vector3 joint_axis;
+      if (is_fixed) {
+        joint_axis = joint_ptr->parent_to_joint_origin_transform.rotation * joint_ptr->axis;
+      } else {
+        joint_axis = urdf::Vector3(1, 0, 0);
+      }
+      joint_info->_vaxes[0] = URDFVectorToRaveVector(joint_axis);
       
-      // Configure joint limits
+      // Configure joint limits.
       boost::shared_ptr<urdf::JointLimits> limits = joint_ptr->limits;
       if (limits) {
-	makeTextElement(joint, "maxvel", boost::lexical_cast<std::string>(limits->velocity));
-	makeTextElement(joint, "limitsrad", boost::str(boost::format("%f %f") 
-						       % limits->lower % limits->upper));
+          joint_info->_vlowerlimit[0] = limits->lower;
+          joint_info->_vupperlimit[0] = limits->upper;
+          joint_info->_vmaxvel[0] = limits->velocity;
+          joint_info->_vmaxtorque[0] = limits->effort;
+      } else if (is_fixed) {
+          joint_info->_vlowerlimit[0] = 0;
+          joint_info->_vupperlimit[0] = 0;
       }
 
-      // Add joint to XML
-      kinBody->LinkEndChild(joint);
+      joint_infos.push_back(joint_info);
     }
 
-    // Output link adjacencies.
+    // TODO: Output link adjacencies.
+#if 0
     if(fin.is_open()){
         YAML::Node const &adjacent_yaml = doc["adjacent"];
         for (size_t i = 0; i < adjacent_yaml.size(); ++i) {
@@ -464,15 +465,14 @@ namespace or_urdf
             makeTextElement(kinBody, "Adjacent", link1 + " " + link2);
         }
     }
+#endif
 
-    // Write out the XML document to a string interface
-    // (e.g. http://www.grinninglizard.com/tinyxmldocs/classTiXmlPrinter.html)
-    TiXmlPrinter robotPrinter;
-    //    robotPrinter.SetStreamPrinting();
-    xml.Accept(&robotPrinter);
+    OpenRAVE::KinBodyPtr kinbody = OpenRAVE::RaveCreateKinBody(GetEnv(), "");
+    kinbody->Init(link_infos, joint_infos);
+    // XXX: Allow a user-specified name.
+    kinbody->SetName("urdf");
+    GetEnv()->Add(kinbody, true);
 
-    std::string const kinbody_xml = robotPrinter.CStr();
-    soutput << kinbody_xml;
     return true;
   }
 

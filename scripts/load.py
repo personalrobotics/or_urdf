@@ -40,7 +40,7 @@ if args.output_path is not None:
     print 'Saved KinBody to {0:s}'.format(args.output_path)
 
 if args.interactive:
-    env.LoadData(kinbody_xml)
+    #env.LoadData(kinbody_xml)
     env.SetViewer('qtcoin')
 
     try:
