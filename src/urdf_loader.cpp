@@ -132,6 +132,7 @@ namespace or_urdf
     case urdf::Joint::FIXED:
       return std::make_pair(OpenRAVE::KinBody::JointHinge, false);
     case urdf::Joint::CONTINUOUS:
+      std::cout << "convert CONTINUOUS" << std::endl;
       return std::make_pair(OpenRAVE::KinBody::JointHinge, true);
     case urdf::Joint::PLANAR:
     case urdf::Joint::FLOATING:
@@ -240,18 +241,26 @@ namespace or_urdf
       throw OpenRAVE::openrave_exception("Failed to open URDF file!");
     }
 
-    // Populate list of links from URDF model
+    // Populate list of links from URDF model. We'll force the root link to be first.
     std::vector< boost::shared_ptr<urdf::Link> > link_vector;
     model.getLinks(link_vector);
-    std::list< boost::shared_ptr<urdf::Link> > link_list(link_vector.begin(), link_vector.end());
+
+    std::list<boost::shared_ptr<urdf::Link const> > link_list;
     std::set<std::string> finished_links;
+
+    link_list.insert(link_list.begin(), model.getRoot());
+    BOOST_FOREACH (boost::shared_ptr<urdf::Link> link, link_vector) {
+        if (link != model.getRoot()) {
+            link_list.insert(link_list.end(), link);
+        }
+    }
 
     // TODO: prevent infinite loops here
     // Iterate through all links, allowing deferred evaluation (putting links
     // back on the list) if their parents do not exist yet
-    boost::shared_ptr<urdf::Link> link_ptr;
-
+    boost::shared_ptr<urdf::Link const> link_ptr;
     std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos;
+
     while (!link_list.empty()) {
       // Get next element in list
       link_ptr = link_list.front();
@@ -279,7 +288,6 @@ namespace or_urdf
         link_info->_t = URDFPoseToRaveTransform(parent_joint->parent_to_joint_origin_transform) * link_info->_t;
         boost::shared_ptr<urdf::Link const> parent_link = model.getLink(parent_joint->parent_link_name);
         parent_joint = parent_link->parent_joint;
-        //break;
       }
       
       // Set information for collision geometry
@@ -329,6 +337,7 @@ namespace or_urdf
             break;
         }
         }
+
         link_info->_vgeometryinfos.push_back(geom_info);
       }
 
@@ -415,31 +424,41 @@ namespace or_urdf
       joint_info->_vanchor = URDFVectorToRaveVector(joint_ptr->parent_to_joint_origin_transform.position);
       // XXX: What about offsetfrom in the KinBody XML?
 
+      std::cout << "Type(J[" << joint_ptr->name << "]) = " << joint_ptr->type
+                << " limits " << joint_ptr->limits << std::endl;;
+      
+      int urdf_joint_type = joint_ptr->type;
+      if (urdf_joint_type == urdf::Joint::REVOLUTE || urdf_joint_type == urdf::Joint::CONTINUOUS) {
+          if (joint_ptr->limits) {
+              urdf_joint_type = urdf::Joint::REVOLUTE;
+              std::cout << "force REVOLUTE" << std::endl;
+          } else {
+              urdf_joint_type = urdf::Joint::CONTINUOUS;
+              std::cout << "force CONTINUOUS" << std::endl;
+          }
+      }
+
       // Set the joint type. Some URDF joints correspond to disabled OpenRAVE
       // joints, so we'll appropriately set the corresponding IsActive flag.
       OpenRAVE::KinBody::JointType joint_type;
       bool enabled;
-      boost::tie(joint_type, enabled) = URDFJointTypeToRaveJointType(joint_ptr->type);
+      boost::tie(joint_type, enabled) = URDFJointTypeToRaveJointType(urdf_joint_type);
+
       joint_info->_type = joint_type;
       joint_info->_bIsActive = enabled;
-
-      // Offset is relative to the parent link.
-
 
       // URDF only supports linear mimic joints with a constant offset. We map
       // that into the correct position (index 0) and velocity (index 1)
       // equations for OpenRAVE.
       // XXX: Mimic joints don't work properly.
-#if 0
       boost::shared_ptr<urdf::JointMimic> mimic = joint_ptr->mimic;
       if (mimic) {
+        joint_info->_vmimic[0] = boost::make_shared<OpenRAVE::KinBody::MimicInfo>();
         joint_info->_vmimic[0]->_equations[0] = boost::str(boost::format("%s*%0.6f+%0.6f")
                                                   % mimic->joint_name % mimic->multiplier % mimic->offset);
         joint_info->_vmimic[0]->_equations[1] = boost::str(boost::format("|%s %0.6f")
                                                   % mimic->joint_name % mimic->multiplier);
-        joint_info->_vmimic[0]->_equations[2] = "0";
       }
-#endif
 
       // Configure joint axis. Add an arbitrary axis if the joint is disabled.
       urdf::Vector3 joint_axis;
@@ -457,25 +476,21 @@ namespace or_urdf
           joint_info->_vupperlimit[0] = limits->upper;
           joint_info->_vmaxvel[0] = limits->velocity;
           joint_info->_vmaxtorque[0] = limits->effort;
-      } else if (!enabled) {
+      }
+      // Fixed joints are just revolute joints with zero limits.
+      else if (!enabled) {
           joint_info->_vlowerlimit[0] = 0;
           joint_info->_vupperlimit[0] = 0;
+      }
+      // This is a hack to get continuous joints to work. The limits default to
+      // [0, 0], which inserts a fixed joint.
+      else if (urdf_joint_type == urdf::Joint::CONTINUOUS) {
+          joint_info->_vlowerlimit[0] = -2 * M_PI;
+          joint_info->_vupperlimit[0] =  2 * M_PI;
       }
 
       joint_infos.push_back(joint_info);
     }
-
-    // TODO: Output link adjacencies.
-#if 0
-    if(fin.is_open()){
-        YAML::Node const &adjacent_yaml = doc["adjacent"];
-        for (size_t i = 0; i < adjacent_yaml.size(); ++i) {
-            std::string const link1 = adjacent_yaml[i][0].to<std::string>();
-            std::string const link2 = adjacent_yaml[i][1].to<std::string>();
-            makeTextElement(kinBody, "Adjacent", link1 + " " + link2);
-        }
-    }
-#endif
 
     // Create the KinBody.
     // XXX: Allow the user to specify the name.
