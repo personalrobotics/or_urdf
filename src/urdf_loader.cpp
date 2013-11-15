@@ -261,13 +261,6 @@ namespace or_urdf
 
       link_info->_name = link_ptr->name;
       // TODO: Set "type" to "dynamic".
-
-      // TODO: is this at all reasonable?
-      // Set local transformation to be same as parent joint
-      boost::shared_ptr<urdf::Joint> parent_joint = link_ptr->parent_joint;
-      if (parent_joint) {
-        link_info->_t = URDFPoseToRaveTransform(parent_joint->parent_to_joint_origin_transform);
-      }
       
       // Set inertial parameters
       boost::shared_ptr<urdf::Inertial> inertial = link_ptr->inertial;
@@ -280,13 +273,24 @@ namespace or_urdf
         link_info->_vinertiamoments = OpenRAVE::Vector(inertial->ixx, inertial->iyy, inertial->izz);
       }
 
+      // Set local transformation to be same as parent joint
+      boost::shared_ptr<urdf::Joint> parent_joint = link_ptr->parent_joint;
+      while (parent_joint) {
+        //link_info->_t = URDFPoseToRaveTransform(parent_joint->parent_to_joint_origin_transform) * link_info->_t;
+        boost::shared_ptr<urdf::Link const> parent_link = model.getLink(parent_joint->parent_link_name);
+        parent_joint = parent_link->parent_joint;
+      }
+
+    if (link_ptr->name == "/herb_base") {
+        std::cout << "link_transform = " << link_info->_t << std::endl;
+    }
+      
       // Set information for collision geometry
-      //link_info->_vgeometryinfos
       boost::shared_ptr<urdf::Collision> collision = link_ptr->collision;
       if (collision) {
         OpenRAVE::KinBody::GeometryInfoPtr geom_info = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>();
 
-        geom_info->_t = URDFPoseToRaveTransform(collision->origin);
+        //geom_info->_t = URDFPoseToRaveTransform(collision->origin);
         geom_info->_bVisible = false;
         geom_info->_bModifiable = false;
 
@@ -336,12 +340,17 @@ namespace or_urdf
       // desired render mesh.
       boost::shared_ptr<urdf::Visual> visual = link_ptr->visual;
       if (visual) {
+
         OpenRAVE::KinBody::GeometryInfoPtr geom_info = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>();
-        geom_info->_t = URDFPoseToRaveTransform(collision->origin);
+        geom_info->_t = URDFPoseToRaveTransform(visual->origin);
         geom_info->_type = OpenRAVE::GT_Sphere;
         geom_info->_vGeomData = OpenRAVE::Vector(0.0, 0.0, 0.0);
         geom_info->_bModifiable = false;
         geom_info->_bVisible = true;
+
+        if (link_ptr->name == "/herb_base") {
+            std::cout << "visual_transform = " << geom_info->_t << std::endl;
+        }
 
         switch (visual->geometry->type) {
         case urdf::Geometry::MESH: {
@@ -421,6 +430,8 @@ namespace or_urdf
       boost::tie(joint_type, enabled) = URDFJointTypeToRaveJointType(joint_ptr->type);
       joint_info->_type = joint_type;
       joint_info->_bIsActive = enabled;
+
+      // Offset is relative to the parent link.
 
 
       // URDF only supports linear mimic joints with a constant offset. We map

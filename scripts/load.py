@@ -42,3 +42,11 @@ if args.output_path is not None:
 if args.interactive:
     #env.LoadData(kinbody_xml)
     env.SetViewer('qtcoin')
+
+    body = env.GetBodies()[0]
+    handles = list()
+
+    for link in body.GetLinks():
+        pose = link.GetTransform()
+        handle = openravepy.misc.DrawAxes(env, pose, 0.2, 2)
+        handles.append(handle)
