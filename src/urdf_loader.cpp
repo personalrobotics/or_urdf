@@ -1,14 +1,14 @@
 /** \file urdf_loader.cpp
  * \brief Implementation of a URDF loading plugin for OpenRAVE
- * \author Pras Velagapudi
+ * \author Pras Velagapudi, Michael Koval
  * \date 2013
  */
 
 /* (C) Copyright 2013 Carnegie Mellon University */
 
 #include "urdf_loader.h"
-#include "urdf_yaml_helpers.h"
 #include "boostfs_helpers.h"
+#include "urdf_yaml_helpers.h"
 
 #include <tinyxml.h>
 #include <urdf/model.h>
@@ -132,7 +132,6 @@ namespace or_urdf
     case urdf::Joint::FIXED:
       return std::make_pair(OpenRAVE::KinBody::JointHinge, false);
     case urdf::Joint::CONTINUOUS:
-      std::cout << "convert CONTINUOUS" << std::endl;
       return std::make_pair(OpenRAVE::KinBody::JointHinge, true);
     case urdf::Joint::PLANAR:
     case urdf::Joint::FLOATING:
@@ -144,85 +143,6 @@ namespace or_urdf
     }
   }
   
-  void makeTextElement(TiXmlElement *element, const std::string &name, const std::string &value)
-  {
-    TiXmlElement *node = new TiXmlElement(name);  
-    node->LinkEndChild(new TiXmlText(value));  
-    element->LinkEndChild(node);
-  }
-  
-  class Geometry {
-  public:
-    enum Type { COLLISION, RENDER };
-  };
-
-  /** Static empty mesh (used as placeholder when no geometry exists) */
-  static const std::string empty_filename = resolveURI("package://or_urdf/empty.iv");
-
-  TiXmlElement *makeGeomElement(const urdf::Geometry &geometry, Geometry::Type type)
-  {
-    TiXmlElement *node = new TiXmlElement("Geom");
-    // TODO: set a "render" attribute depending on collision or render
-
-    // Convert depending on geometry type
-    switch(geometry.type) {
-    case urdf::Geometry::SPHERE:
-      {
-	node->SetAttribute("type", "sphere");
-
-	const urdf::Sphere &sphere = dynamic_cast<const urdf::Sphere&>(geometry);
-	makeTextElement(node, "radius", boost::lexical_cast<std::string>(sphere.radius));
-      }
-      break;
-    case urdf::Geometry::BOX:
-      {
-	node->SetAttribute("type", "box");
-
-	const urdf::Box &box = dynamic_cast<const urdf::Box&>(geometry);
-	makeTextElement(node, "extents", boost::str(boost::format("%f %f %f")
-						    % box.dim.x % box.dim.y % box.dim.z ));
-      }
-      break;
-    case urdf::Geometry::CYLINDER:
-      {
-	node->SetAttribute("type", "cylinder");
-
-	const urdf::Cylinder &cylinder = dynamic_cast<const urdf::Cylinder&>(geometry);
-	makeTextElement(node, "height", boost::lexical_cast<std::string>(cylinder.length));
-	makeTextElement(node, "radius", boost::lexical_cast<std::string>(cylinder.radius));
-      }
-      break;
-    case urdf::Geometry::MESH:
-      {
-	const urdf::Mesh &mesh = dynamic_cast<const urdf::Mesh&>(geometry);
-	std::string mesh_filename = resolveURI(mesh.filename);
-
-	// Either create a collision or render geometry
-	switch(type) {
-	case Geometry::COLLISION:
-          node->SetAttribute("type", "trimesh");
-          node->SetAttribute("render", "false");
-       	  makeTextElement(node, "Data", mesh_filename);
-	  break;
-	case Geometry::RENDER:
-          node->SetAttribute("type", "sphere");
-          makeTextElement(node, "radius", "0.0");
-	  makeTextElement(node, "Render", mesh_filename);
-	  break;
-	default:
-	  RAVELOG_ERROR("URDFLoader : Unable to determine trimesh type [%d].\n", type);
-	  throw OpenRAVE::openrave_exception("Failed to convert URDF trimesh!");
-	}
-      }
-      break;
-    default:
-      RAVELOG_ERROR("URDFLoader : Unable to determine geometry type [%d].\n", geometry.type);
-      throw OpenRAVE::openrave_exception("Failed to convert URDF geometry!");
-    }
-    
-    return node;
-  }
-
   /** Opens a URDF file and returns a robot in OpenRAVE */
   bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
   {
@@ -422,19 +342,13 @@ namespace or_urdf
       joint_info->_linkname0 = joint_ptr->parent_link_name;
       joint_info->_linkname1 = joint_ptr->child_link_name;
       joint_info->_vanchor = URDFVectorToRaveVector(joint_ptr->parent_to_joint_origin_transform.position);
-      // XXX: What about offsetfrom in the KinBody XML?
 
-      std::cout << "Type(J[" << joint_ptr->name << "]) = " << joint_ptr->type
-                << " limits " << joint_ptr->limits << std::endl;;
-      
       int urdf_joint_type = joint_ptr->type;
       if (urdf_joint_type == urdf::Joint::REVOLUTE || urdf_joint_type == urdf::Joint::CONTINUOUS) {
           if (joint_ptr->limits) {
               urdf_joint_type = urdf::Joint::REVOLUTE;
-              std::cout << "force REVOLUTE" << std::endl;
           } else {
               urdf_joint_type = urdf::Joint::CONTINUOUS;
-              std::cout << "force CONTINUOUS" << std::endl;
           }
       }
 
@@ -450,7 +364,6 @@ namespace or_urdf
       // URDF only supports linear mimic joints with a constant offset. We map
       // that into the correct position (index 0) and velocity (index 1)
       // equations for OpenRAVE.
-      // XXX: Mimic joints don't work properly.
       boost::shared_ptr<urdf::JointMimic> mimic = joint_ptr->mimic;
       if (mimic) {
         joint_info->_vmimic[0] = boost::make_shared<OpenRAVE::KinBody::MimicInfo>();
@@ -472,6 +385,7 @@ namespace or_urdf
       // Configure joint limits.
       boost::shared_ptr<urdf::JointLimits> limits = joint_ptr->limits;
       if (limits) {
+          // TODO: What about acceleration?
           joint_info->_vlowerlimit[0] = limits->lower;
           joint_info->_vupperlimit[0] = limits->upper;
           joint_info->_vmaxvel[0] = limits->velocity;
