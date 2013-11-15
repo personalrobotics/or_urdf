@@ -10,8 +10,6 @@
 #include "boostfs_helpers.h"
 #include "urdf_yaml_helpers.h"
 
-#include <tinyxml.h>
-#include <urdf/model.h>
 #include <boost/foreach.hpp>
 #include <boost/make_shared.hpp>
 #include <boost/format.hpp>
@@ -142,25 +140,10 @@ namespace or_urdf
       throw OpenRAVE::openrave_exception("Failed to convert URDF joint!");
     }
   }
-  
-  /** Opens a URDF file and returns a robot in OpenRAVE */
-  bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
+
+  void URDFLoader::ParseURDF(urdf::Model &model, std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> &link_infos,
+                                                 std::vector<OpenRAVE::KinBody::JointInfoConstPtr> &joint_infos)
   {
-    // Get filename from input arguments
-    std::string urdf_filename;
-    sinput >> urdf_filename;
-
-    // Get the config file from input arguments
-    std::string config_filename;
-    sinput >> config_filename;
-
-    // Parse file via URDF reader
-    urdf::Model model;
-    if (!model.initFile(urdf_filename)) {
-      RAVELOG_ERROR("URDFLoader : Unable to open URDF file [%s].\n", urdf_filename.c_str());
-      throw OpenRAVE::openrave_exception("Failed to open URDF file!");
-    }
-
     // Populate list of links from URDF model. We'll force the root link to be first.
     std::vector< boost::shared_ptr<urdf::Link> > link_vector;
     model.getLinks(link_vector);
@@ -179,7 +162,6 @@ namespace or_urdf
     // Iterate through all links, allowing deferred evaluation (putting links
     // back on the list) if their parents do not exist yet
     boost::shared_ptr<urdf::Link const> link_ptr;
-    std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos;
 
     while (!link_list.empty()) {
       // Get next element in list
@@ -305,37 +287,10 @@ namespace or_urdf
     // Parse the yaml file
     YAML::Node doc;
     std::vector<boost::shared_ptr<urdf::Joint> > ordered_joints;
-    
-    std::ifstream fin(config_filename.c_str());
-    if(fin.is_open()){
-        YAML::Parser parser(fin);
-        parser.GetNextDocument(doc);
-        const YAML::Node *joints = doc.FindValue("joints");
-        std::map<std::string, int> jmap;
-        if(joints){
-            *joints >> jmap;
-        }
-
-        // Now create an ordered list of the joints
-        ordered_joints.resize(jmap.size());
-        BOOST_FOREACH(boost::tie(joint_name, joint_ptr), model.joints_) {
-            std::map<std::string, int>::iterator it = jmap.find(joint_name);
-            
-            // Add the joint to the appropriate point in the list
-            if(it != jmap.end()){
-                ordered_joints[it->second] = joint_ptr;
-            }else{
-                ordered_joints.push_back(joint_ptr);
-            }
-        }
-    }else{
-        // Just make the ordered joints the model joints
-        BOOST_FOREACH(boost::tie(joint_name, joint_ptr), model.joints_) {
-            ordered_joints.push_back(joint_ptr);
-        }
+    BOOST_FOREACH(boost::tie(joint_name, joint_ptr), model.joints_) {
+        ordered_joints.push_back(joint_ptr);
     }
 
-    std::vector<OpenRAVE::KinBody::JointInfoConstPtr> joint_infos;
     BOOST_FOREACH(boost::shared_ptr<urdf::Joint> joint_ptr, ordered_joints) {
       OpenRAVE::KinBody::JointInfoPtr joint_info = boost::make_shared<OpenRAVE::KinBody::JointInfo>();
       joint_info->_name = joint_ptr->name;
@@ -405,13 +360,33 @@ namespace or_urdf
 
       joint_infos.push_back(joint_info);
     }
+  }
+  
+  /** Opens a URDF file and returns a robot in OpenRAVE */
+  bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
+  {
+    // Get filename from input arguments
+    std::string urdf_filename;
+    sinput >> urdf_filename;
+
+    // Parse file via URDF reader
+    urdf::Model model;
+    if (!model.initFile(urdf_filename)) {
+      RAVELOG_ERROR("URDFLoader : Unable to open URDF file [%s].\n", urdf_filename.c_str());
+      throw OpenRAVE::openrave_exception("Failed to open URDF file!");
+    }
+
 
     // Create the KinBody.
-    // XXX: Allow the user to specify the name.
+    std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos;
+    std::vector<OpenRAVE::KinBody::JointInfoConstPtr> joint_infos;
+    ParseURDF(model, link_infos, joint_infos);
+
     OpenRAVE::KinBodyPtr kinbody = OpenRAVE::RaveCreateKinBody(GetEnv(), "");
     kinbody->Init(link_infos, joint_infos);
-    kinbody->SetName("urdf");
+    kinbody->SetName(model.getName());
     GetEnv()->Add(kinbody, true);
+    soutput << model.getName();
     return true;
   }
 

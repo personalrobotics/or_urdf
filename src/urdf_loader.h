@@ -11,6 +11,7 @@
 #include <openrave/openrave.h>
 #include <openrave/plugin.h>
 #include <boost/bind.hpp>
+#include <urdf/model.h>
 
 namespace or_urdf
 {
@@ -30,6 +31,9 @@ namespace or_urdf
     }
     
     virtual ~URDFLoader() {}
+
+    void ParseURDF(urdf::Model &model, std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> &link_infos,
+                                       std::vector<OpenRAVE::KinBody::JointInfoConstPtr> &joint_infos);
 
     void Destroy() { RAVELOG_INFO("URDF loader unloaded from environment\n"); }
     
