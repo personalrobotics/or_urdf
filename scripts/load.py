@@ -42,17 +42,3 @@ if args.output_path is not None:
 if args.interactive:
     #env.LoadData(kinbody_xml)
     env.SetViewer('qtcoin')
-
-    try:
-        from IPython.Shell import IPShellEmbed
-        shell = IPShellEmbed()
-        shell(local_ns=locals())
-    # Just wait for a Control+C if IPython is not available.
-    except ImportError:
-        try:
-            while True: pass
-        except KeyboardInterrupt:
-            pass
-
-env.Destroy()
-openravepy.RaveDestroy()
