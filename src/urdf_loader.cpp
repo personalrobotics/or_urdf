@@ -52,7 +52,7 @@ namespace or_urdf
   /** Converts from URDF 3D rotation to OpenRAVE 3D vector. */
   OpenRAVE::Vector URDFRotationToRaveVector(const urdf::Rotation &rotation)
   {
-    return OpenRAVE::Vector(rotation.x, rotation.y, rotation.z, rotation.w);
+    return OpenRAVE::Vector(rotation.w, rotation.x, rotation.y, rotation.z);
   }
 
   OpenRAVE::Vector URDFColorToRaveVector(const urdf::Color &color)
@@ -276,14 +276,11 @@ namespace or_urdf
       // Set local transformation to be same as parent joint
       boost::shared_ptr<urdf::Joint> parent_joint = link_ptr->parent_joint;
       while (parent_joint) {
-        //link_info->_t = URDFPoseToRaveTransform(parent_joint->parent_to_joint_origin_transform) * link_info->_t;
+        link_info->_t = URDFPoseToRaveTransform(parent_joint->parent_to_joint_origin_transform) * link_info->_t;
         boost::shared_ptr<urdf::Link const> parent_link = model.getLink(parent_joint->parent_link_name);
         parent_joint = parent_link->parent_joint;
+        //break;
       }
-
-    if (link_ptr->name == "/herb_base") {
-        std::cout << "link_transform = " << link_info->_t << std::endl;
-    }
       
       // Set information for collision geometry
       boost::shared_ptr<urdf::Collision> collision = link_ptr->collision;
@@ -340,17 +337,12 @@ namespace or_urdf
       // desired render mesh.
       boost::shared_ptr<urdf::Visual> visual = link_ptr->visual;
       if (visual) {
-
         OpenRAVE::KinBody::GeometryInfoPtr geom_info = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>();
         geom_info->_t = URDFPoseToRaveTransform(visual->origin);
         geom_info->_type = OpenRAVE::GT_Sphere;
         geom_info->_vGeomData = OpenRAVE::Vector(0.0, 0.0, 0.0);
         geom_info->_bModifiable = false;
         geom_info->_bVisible = true;
-
-        if (link_ptr->name == "/herb_base") {
-            std::cout << "visual_transform = " << geom_info->_t << std::endl;
-        }
 
         switch (visual->geometry->type) {
         case urdf::Geometry::MESH: {
