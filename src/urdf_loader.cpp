@@ -269,6 +269,8 @@ namespace or_urdf
         geom_info->_bModifiable = false;
         geom_info->_bVisible = true;
 
+        //_mapExtraGeometries["visual"] = 
+
         switch (visual->geometry->type) {
         case urdf::Geometry::MESH: {
             const urdf::Mesh &mesh = dynamic_cast<const urdf::Mesh&>(*visual->geometry);
@@ -287,7 +289,10 @@ namespace or_urdf
             geom_info->_vDiffuseColor = URDFColorToRaveVector(material->color);
             geom_info->_vAmbientColor = URDFColorToRaveVector(material->color);
         }
+
         link_info->_vgeometryinfos.push_back(geom_info);
+        // TODO: Add the visual geometry to a separate group.
+        //link_info->_mapExtraGeometries["visual"].push_back(geom_info);
       }
       
       // Mark this link as completed
@@ -385,6 +390,7 @@ void URDFLoader::ParseSRDF(srdf::Model &srdf, std::vector<OpenRAVE::KinBody::Lin
         link_map[link_info->_name] = link_info;
     }
 
+    // Link adjacencies.
     std::string link1_name, link2_name;
     BOOST_FOREACH(boost::tie(link1_name, link2_name), srdf.getDisabledCollisions()) {
         OpenRAVE::KinBody::LinkInfoPtr link1_info = link_map[link1_name];
@@ -404,6 +410,7 @@ void URDFLoader::ParseSRDF(srdf::Model &srdf, std::vector<OpenRAVE::KinBody::Lin
     }
 
     // TODO: Create manipulators.
+
     // TODO: Add CHOMP spheres.
 }
   
