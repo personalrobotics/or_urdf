@@ -376,24 +376,28 @@ namespace or_urdf
     }
   }
 
-void URDFLoader::ParseSRDF(TiXmlElement *srdf, std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
-                                               std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos,
-                                               std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> &manip_infos)
+void URDFLoader::ParseSRDF(srdf::Model &srdf, std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
+                                              std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos,
+                                              std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> &manip_infos)
 {
     std::map<std::string, OpenRAVE::KinBody::LinkInfoPtr> link_map;
     BOOST_FOREACH (OpenRAVE::KinBody::LinkInfoPtr link_info, link_infos) {
         link_map[link_info->_name] = link_info;
     }
 
-    // Load link adjacencies from SRDF.
-    TiXmlElement *adjacent_element;
-    for (adjacent_element = srdf->FirstChildElement("disable_collisions");
-         adjacent_element;
-         adjacent_element = adjacent_element->NextSiblingElement("disable_collisions")) {
-        std::string const link1_name = adjacent_element->Attribute("link1");
-        std::string const link2_name = adjacent_element->Attribute("link2");
+    std::string link1_name, link2_name;
+    BOOST_FOREACH(boost::tie(link1_name, link2_name), srdf.getDisabledCollisions()) {
         OpenRAVE::KinBody::LinkInfoPtr link1_info = link_map[link1_name];
+        if (!link1_info) {
+            throw OPENRAVE_EXCEPTION_FORMAT("There is no link named %s.", link1_name.c_str(),
+                                            OpenRAVE::ORE_Failed);
+        }
+
         OpenRAVE::KinBody::LinkInfoPtr link2_info = link_map[link2_name];
+        if (!link2_info) {
+            throw OPENRAVE_EXCEPTION_FORMAT("There is no link named %s.", link2_name.c_str(),
+                                            OpenRAVE::ORE_Failed);
+        }
 
         link1_info->_vForcedAdjacentLinks.push_back(link2_name);
         link2_info->_vForcedAdjacentLinks.push_back(link1_name);
@@ -416,29 +420,26 @@ void URDFLoader::ParseSRDF(TiXmlElement *srdf, std::vector<OpenRAVE::KinBody::Li
     std::string name;
 
     // Load the URDF file.
-    urdf::Model model;
-    if (!model.initFile(input_urdf)) {
-      RAVELOG_ERROR("URDFLoader : Unable to open URDF file [%s].\n", input_urdf.c_str());
-      throw OpenRAVE::openrave_exception("Failed to open URDF file!");
+    urdf::Model urdf_model;
+    if (!urdf_model.initFile(input_urdf)) {
+      throw OpenRAVE::openrave_exception("Failed to open URDF file.");
     }
 
     std::vector<OpenRAVE::KinBody::LinkInfoPtr> link_infos;
     std::vector<OpenRAVE::KinBody::JointInfoPtr> joint_infos;
-    ParseURDF(model, link_infos, joint_infos);
+    ParseURDF(urdf_model, link_infos, joint_infos);
 
     // Optionally load the SRDF to create a Robot.
     if (!input_srdf.empty()) {
         std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> manip_infos;
         std::vector<OpenRAVE::RobotBase::AttachedSensorInfoPtr> sensor_infos;
 
-        TiXmlDocument srdf_xml(input_srdf);
-        if (!srdf_xml.LoadFile()) {
-            throw OpenRAVE::openrave_exception("Failed loading SRDF file.");
+        srdf::Model srdf_model;
+        if (!srdf_model.initFile(urdf_model, input_srdf)) {
+            throw OpenRAVE::openrave_exception("Failed to open SRDF file.");
         }
 
-        TiXmlElement *srdf_root = srdf_xml.RootElement();
-        BOOST_ASSERT(srdf_root);
-        ParseSRDF(srdf_root, link_infos, joint_infos, manip_infos);
+        ParseSRDF(srdf_model, link_infos, joint_infos, manip_infos);
 
         // Cast all of the vector contents to const.
         std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos_const = MakeConst(link_infos);
@@ -460,7 +461,7 @@ void URDFLoader::ParseSRDF(TiXmlElement *srdf, std::vector<OpenRAVE::KinBody::Li
         body->Init(link_infos_const, joint_infos_const);
     }
 
-    body->SetName(model.getName());
+    body->SetName(urdf_model.getName());
     GetEnv()->Add(body, true);
     soutput << body->GetName(); 
     return true;
