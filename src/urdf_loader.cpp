@@ -290,12 +290,15 @@ namespace or_urdf
             geom_info->_vAmbientColor = URDFColorToRaveVector(material->color);
         }
 
+        // Add the render-only geometry to the standard geometry group for
+        // backwards compatability with QtCoin.
         link_info->_vgeometryinfos.push_back(geom_info);
-        // TODO: Add the visual geometry to a separate group.
-        //link_info->_mapExtraGeometries["visual"].push_back(geom_info);
+
+        // Create a group dedicated to visual geometry for or_rviz.
+        OpenRAVE::KinBody::GeometryInfoPtr geom_info_clone = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>(*geom_info);
+        link_info->_mapExtraGeometries["visual"].push_back(geom_info_clone);
       }
       
-      // Mark this link as completed
       link_infos.push_back(link_info);
     }
 

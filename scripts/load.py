@@ -33,12 +33,14 @@ except openravepy.openrave_exception, e:
     parser.error('Failed generating KinBody: {0:s}'.format(e.message))
     sys.exit(1)
 
-env.SetViewer('qtcoin')
+env.SetViewer('or_rviz')
 
 body = env.GetBodies()[0]
 handles = list()
 
+"""
 for link in body.GetLinks():
     pose = link.GetTransform()
     handle = openravepy.misc.DrawAxes(env, pose, 0.2, 2)
     handles.append(handle)
+"""
