@@ -8,6 +8,7 @@
 #ifndef URDF_LOADER_H
 #define URDF_LOADER_H
 
+#include <tinyxml.h>
 #include <openrave/openrave.h>
 #include <openrave/plugin.h>
 #include <boost/bind.hpp>
@@ -29,13 +30,16 @@ namespace or_urdf
 
       RegisterCommand("load", boost::bind(&URDFLoader::load, this, _1, _2), "loads URDF from file");     
     }
+
+    void Destroy() { RAVELOG_INFO("URDF loader unloaded from environment\n"); }
     
     virtual ~URDFLoader() {}
 
-    void ParseURDF(urdf::Model &model, std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> &link_infos,
-                                       std::vector<OpenRAVE::KinBody::JointInfoConstPtr> &joint_infos);
-
-    void Destroy() { RAVELOG_INFO("URDF loader unloaded from environment\n"); }
+    void ParseURDF(urdf::Model &model, std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
+                                       std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos);
+    void ParseSRDF(TiXmlElement *srdf, std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
+                                       std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos,
+                                       std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> &manip_infos);
     
     /* This is called on env.LoadProblem(m, 'command') */
     int main(const std::string& cmd) { RAVELOG_INFO("URDF loader initialized with command: %s\n", cmd.c_str()); return 0; }

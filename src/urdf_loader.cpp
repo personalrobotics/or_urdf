@@ -10,6 +10,7 @@
 #include "boostfs_helpers.h"
 #include "urdf_yaml_helpers.h"
 
+#include <boost/algorithm/string/predicate.hpp>
 #include <boost/foreach.hpp>
 #include <boost/make_shared.hpp>
 #include <boost/format.hpp>
@@ -41,6 +42,19 @@ void DestroyPlugin()
 
 namespace or_urdf
 {
+  template <class T>
+  std::vector<boost::shared_ptr<T const> > MakeConst(std::vector<boost::shared_ptr<T> > const &vconst)
+  {
+      std::vector<boost::shared_ptr<T const> > v;
+      v.reserve(vconst.size());
+
+      BOOST_FOREACH (boost::shared_ptr<T> const &x, vconst) {
+          v.push_back(x);
+      }
+
+      return v;
+  }
+
   /** Converts from URDF 3D vector to OpenRAVE 3D vector. */
   OpenRAVE::Vector URDFVectorToRaveVector(const urdf::Vector3 &vector)
   {
@@ -141,8 +155,8 @@ namespace or_urdf
     }
   }
 
-  void URDFLoader::ParseURDF(urdf::Model &model, std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> &link_infos,
-                                                 std::vector<OpenRAVE::KinBody::JointInfoConstPtr> &joint_infos)
+  void URDFLoader::ParseURDF(urdf::Model &model, std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
+                                                 std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos)
   {
     // Populate list of links from URDF model. We'll force the root link to be first.
     std::vector< boost::shared_ptr<urdf::Link> > link_vector;
@@ -361,32 +375,94 @@ namespace or_urdf
       joint_infos.push_back(joint_info);
     }
   }
+
+void URDFLoader::ParseSRDF(TiXmlElement *srdf, std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
+                                               std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos,
+                                               std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> &manip_infos)
+{
+    std::map<std::string, OpenRAVE::KinBody::LinkInfoPtr> link_map;
+    BOOST_FOREACH (OpenRAVE::KinBody::LinkInfoPtr link_info, link_infos) {
+        link_map[link_info->_name] = link_info;
+    }
+
+    // Load link adjacencies from SRDF.
+    TiXmlElement *adjacent_element;
+    for (adjacent_element = srdf->FirstChildElement("disable_collisions");
+         adjacent_element;
+         adjacent_element = adjacent_element->NextSiblingElement("disable_collisions")) {
+        std::string const link1_name = adjacent_element->Attribute("link1");
+        std::string const link2_name = adjacent_element->Attribute("link2");
+        OpenRAVE::KinBody::LinkInfoPtr link1_info = link_map[link1_name];
+        OpenRAVE::KinBody::LinkInfoPtr link2_info = link_map[link2_name];
+
+        link1_info->_vForcedAdjacentLinks.push_back(link2_name);
+        link2_info->_vForcedAdjacentLinks.push_back(link1_name);
+    }
+
+    // TODO: Create manipulators.
+    // TODO: Add CHOMP spheres.
+}
   
   /** Opens a URDF file and returns a robot in OpenRAVE */
   bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
   {
     // Get filename from input arguments
-    std::string urdf_filename;
-    sinput >> urdf_filename;
+    std::string input_urdf, input_srdf;
+    sinput >> input_urdf >> input_srdf;
 
-    // Parse file via URDF reader
+    std::cout << "| " << input_urdf << " | " << input_srdf << " |" << std::endl;
+
+    OpenRAVE::KinBodyPtr body;
+    std::string name;
+
+    // Load the URDF file.
     urdf::Model model;
-    if (!model.initFile(urdf_filename)) {
-      RAVELOG_ERROR("URDFLoader : Unable to open URDF file [%s].\n", urdf_filename.c_str());
+    if (!model.initFile(input_urdf)) {
+      RAVELOG_ERROR("URDFLoader : Unable to open URDF file [%s].\n", input_urdf.c_str());
       throw OpenRAVE::openrave_exception("Failed to open URDF file!");
     }
 
-
-    // Create the KinBody.
-    std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos;
-    std::vector<OpenRAVE::KinBody::JointInfoConstPtr> joint_infos;
+    std::vector<OpenRAVE::KinBody::LinkInfoPtr> link_infos;
+    std::vector<OpenRAVE::KinBody::JointInfoPtr> joint_infos;
     ParseURDF(model, link_infos, joint_infos);
 
-    OpenRAVE::KinBodyPtr kinbody = OpenRAVE::RaveCreateKinBody(GetEnv(), "");
-    kinbody->Init(link_infos, joint_infos);
-    kinbody->SetName(model.getName());
-    GetEnv()->Add(kinbody, true);
-    soutput << model.getName();
+    // Optionally load the SRDF to create a Robot.
+    if (!input_srdf.empty()) {
+        std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> manip_infos;
+        std::vector<OpenRAVE::RobotBase::AttachedSensorInfoPtr> sensor_infos;
+
+        TiXmlDocument srdf_xml(input_srdf);
+        if (!srdf_xml.LoadFile()) {
+            throw OpenRAVE::openrave_exception("Failed loading SRDF file.");
+        }
+
+        TiXmlElement *srdf_root = srdf_xml.RootElement();
+        BOOST_ASSERT(srdf_root);
+        ParseSRDF(srdf_root, link_infos, joint_infos, manip_infos);
+
+        // Cast all of the vector contents to const.
+        std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos_const = MakeConst(link_infos);
+        std::vector<OpenRAVE::KinBody::JointInfoConstPtr> joint_infos_const = MakeConst(joint_infos);
+        std::vector<OpenRAVE::RobotBase::ManipulatorInfoConstPtr> manip_infos_const = MakeConst(manip_infos);
+        std::vector<OpenRAVE::RobotBase::AttachedSensorInfoConstPtr> sensor_infos_const = MakeConst(sensor_infos);
+
+        OpenRAVE::RobotBasePtr robot = OpenRAVE::RaveCreateRobot(GetEnv(), "");
+        robot->Init(link_infos_const, joint_infos_const, manip_infos_const, sensor_infos_const);
+        body = robot;
+        // TODO: Set the name.
+    }
+    // It's just a URDF file, so create a KinBody.
+    else {
+        std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos_const = MakeConst(link_infos);
+        std::vector<OpenRAVE::KinBody::JointInfoConstPtr> joint_infos_const = MakeConst(joint_infos);
+
+        body = OpenRAVE::RaveCreateKinBody(GetEnv(), "");
+        body->Init(link_infos_const, joint_infos_const);
+    }
+
+    body->SetName(model.getName());
+    GetEnv()->Add(body, true);
+    soutput << body->GetName(); 
     return true;
   }
 

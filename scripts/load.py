@@ -5,8 +5,8 @@ import argparse, openravepy, os, rospkg, sys
 ros_pack = rospkg.RosPack()
 
 parser = argparse.ArgumentParser(description='loads a URDF model into OpenRAVE')
-parser.add_argument('input_path', type=str, help='path to the URDF file')
-parser.add_argument('output_path', type=str, nargs='?', help='output path for the KinBody file')
+parser.add_argument('urdf_path', type=str)
+parser.add_argument('srdf_path', type=str, default='', nargs='?')
 parser.add_argument('-i', '--interactive', action='store_true', help='display the model in an OpenRAVE viewer')
 parser.add_argument('-c', '--config', type=str, action='store', help='config file for urdf generation')
 args = parser.parse_args()
@@ -26,27 +26,19 @@ if plugin is None:
 
 # Generate the KinBody XML.
 try:
-    kinbody_xml = plugin.SendCommand('load {0:s} {1:s}'.format(args.input_path, args.config))
+    kinbody_xml = plugin.SendCommand('load {0:s} {1:s}'.format(args.urdf_path, args.srdf_path))
     if kinbody_xml is None:
         raise openravepy.openrave_exception('An unknown error has occurred.')
 except openravepy.openrave_exception, e:
     parser.error('Failed generating KinBody: {0:s}'.format(e.message))
     sys.exit(1)
 
-if args.output_path is not None:
-    with open(args.output_path, 'wb') as output_stream:
-        output_stream.write(kinbody_xml)
+env.SetViewer('qtcoin')
 
-    print 'Saved KinBody to {0:s}'.format(args.output_path)
+body = env.GetBodies()[0]
+handles = list()
 
-if args.interactive:
-    #env.LoadData(kinbody_xml)
-    env.SetViewer('qtcoin')
-
-    body = env.GetBodies()[0]
-    handles = list()
-
-    for link in body.GetLinks():
-        pose = link.GetTransform()
-        handle = openravepy.misc.DrawAxes(env, pose, 0.2, 2)
-        handles.append(handle)
+for link in body.GetLinks():
+    pose = link.GetTransform()
+    handle = openravepy.misc.DrawAxes(env, pose, 0.2, 2)
+    handles.append(handle)
