@@ -38,9 +38,11 @@ namespace or_urdf
 
     void ParseURDF(urdf::Model &model, std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
                                        std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos);
-    void ParseSRDF(srdf::Model &srdf, std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
-                                      std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos,
-                                      std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> &manip_infos);
+    void ParseSRDF(urdf::Model const &urdf,
+                   srdf::Model const &srdf,
+                   std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
+                   std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos,
+                   std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> &manip_infos);
     
     /* This is called on env.LoadProblem(m, 'command') */
     int main(const std::string& cmd) { RAVELOG_INFO("URDF loader initialized with command: %s\n", cmd.c_str()); return 0; }

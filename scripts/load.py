@@ -33,7 +33,7 @@ except openravepy.openrave_exception, e:
     parser.error('Failed generating KinBody: {0:s}'.format(e.message))
     sys.exit(1)
 
-env.SetViewer('or_rviz')
+#env.SetViewer('or_rviz')
 
 body = env.GetBodies()[0]
 handles = list()

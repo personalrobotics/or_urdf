@@ -28,6 +28,84 @@ OpenRAVE::InterfaceBasePtr CreateInterfaceValidated(OpenRAVE::InterfaceType type
   }
 }
 
+void GetURDFRootLinks(std::vector<boost::shared_ptr<urdf::Link const> > const &links,
+                      std::vector<boost::shared_ptr<urdf::Link const> >       *roots)
+{
+    typedef boost::shared_ptr<urdf::Link const> LinkConstPtr;
+
+    BOOST_ASSERT(roots);
+
+    std::set<LinkConstPtr> links_set(links.begin(), links.end());
+    std::vector<LinkConstPtr> root_links;
+
+    BOOST_FOREACH (LinkConstPtr link, links) {
+        boost::shared_ptr<urdf::Link const> parent_link = link->getParent();
+        if (links_set.count(parent_link) == 0) {
+            roots->push_back(link);
+        }
+    }
+}
+
+srdf::Model::Group const &GetSRDFGroup(std::map<std::string, srdf::Model::Group> const &groups,
+                                       std::string const &name)
+{
+    BOOST_AUTO(it, groups.find(name));
+    if (it == groups.end()) {
+        throw std::runtime_error(boost::str(boost::format("Group '%s' does not exist.") % name));
+    }
+    return it->second;
+}
+
+void ExtractSRDFGroup(urdf::Model const &urdf, srdf::Model::Group const &group,
+                      std::vector<boost::shared_ptr<urdf::Link const> > *links,
+                      std::vector<boost::shared_ptr<urdf::Joint const> > *joints)
+{
+    BOOST_ASSERT(links);
+    BOOST_ASSERT(joints);
+
+    if (!group.chains_.empty()) {
+        std::string base_link_name, tip_link_name;
+        BOOST_FOREACH (boost::tie(base_link_name, tip_link_name), group.chains_) {
+            // Crawl the kinematic chain from bottom-up.
+            boost::shared_ptr<urdf::Link const> base_link = urdf.getLink(base_link_name);
+            boost::shared_ptr<urdf::Link const> tip_link = urdf.getLink(tip_link_name);
+            boost::shared_ptr<urdf::Link const> link_ptr = tip_link;
+
+            do {
+                boost::shared_ptr<urdf::Joint const> parent_joint = link_ptr->parent_joint;
+                links->push_back(link_ptr);
+                joints->push_back(parent_joint);
+                link_ptr = link_ptr->getParent();
+            } while (link_ptr != tip_link);
+
+            links->push_back(tip_link);
+        }
+    }
+
+    if (!group.joints_.empty()) {
+        // Joints implicitly include their child link.
+        BOOST_FOREACH (std::string const &joint_name, group.joints_) {
+            boost::shared_ptr<urdf::Joint const> joint = urdf.getJoint(joint_name);
+            boost::shared_ptr<urdf::Link const> child_link = urdf.getLink(joint->child_link_name);
+            links->push_back(child_link);
+            joints->push_back(joint);
+        }
+    }
+
+    if (!group.links_.empty()) {
+        // Links implicitly include their parent joint.
+        BOOST_FOREACH (std::string const &link_name, group.links_) {
+            boost::shared_ptr<urdf::Link const> link = urdf.getLink(link_name);
+            boost::shared_ptr<urdf::Joint const> parent_joint = link->parent_joint;
+
+            links->push_back(link);
+            if (parent_joint) {
+                joints->push_back(parent_joint);
+            }
+        }
+    }
+}
+
 /** Boilerplate plugin definition for OpenRAVE */
 void GetPluginAttributesValidated(OpenRAVE::PLUGININFO& info)
 {
@@ -384,9 +462,10 @@ namespace or_urdf
     }
   }
 
-void URDFLoader::ParseSRDF(srdf::Model &srdf, std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
-                                              std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos,
-                                              std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> &manip_infos)
+void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
+                           std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
+                           std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos,
+                           std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> &manip_infos)
 {
     std::map<std::string, OpenRAVE::KinBody::LinkInfoPtr> link_map;
     BOOST_FOREACH (OpenRAVE::KinBody::LinkInfoPtr link_info, link_infos) {
@@ -395,7 +474,7 @@ void URDFLoader::ParseSRDF(srdf::Model &srdf, std::vector<OpenRAVE::KinBody::Lin
 
     // Link adjacencies.
     std::string link1_name, link2_name;
-    BOOST_FOREACH(boost::tie(link1_name, link2_name), srdf.getDisabledCollisions()) {
+    BOOST_FOREACH (boost::tie(link1_name, link2_name), srdf.getDisabledCollisions()) {
         OpenRAVE::KinBody::LinkInfoPtr link1_info = link_map[link1_name];
         if (!link1_info) {
             throw OPENRAVE_EXCEPTION_FORMAT("There is no link named %s.", link1_name.c_str(),
@@ -412,7 +491,93 @@ void URDFLoader::ParseSRDF(srdf::Model &srdf, std::vector<OpenRAVE::KinBody::Lin
         link2_info->_vForcedAdjacentLinks.push_back(link1_name);
     }
 
-    // TODO: Create manipulators.
+    // Passive joints.
+
+    // Build an index of the SRDF groups. This is necessary because the srdf
+    // package provides very low-level access to the file's contents.
+    std::vector<srdf::Model::Group> const &raw_groups = srdf.getGroups();
+    std::map<std::string, srdf::Model::Group> groups;
+
+    BOOST_FOREACH(srdf::Model::Group const &group, raw_groups) {
+        BOOST_AUTO(result, groups.insert(std::make_pair(group.name_, group)));
+        if (!result.second) {
+            throw std::runtime_error(boost::str(
+                boost::format("Duplicate SRDF group '%s'.") % group.name_));
+        }
+    }
+
+    // Create manipulators.
+    BOOST_FOREACH (srdf::Model::EndEffector const &end_effector, srdf.getEndEffectors()) {
+        typedef boost::shared_ptr<urdf::Link const> LinkConstPtr;
+        typedef boost::shared_ptr<urdf::Joint const> JointConstPtr;
+
+        // Get the component group.
+        std::vector<LinkConstPtr> links;
+        std::vector<JointConstPtr> joints;
+        srdf::Model::Group const &ee_group = GetSRDFGroup(groups, end_effector.component_group_);
+        ExtractSRDFGroup(urdf, ee_group, &links, &joints);
+
+        // TODO: Get the manipulator group. Unfortunately, parent_group is not exposed in SRDF.
+
+        // Compute the root link of the end-effector.
+        std::vector<LinkConstPtr> ee_root_links;
+        GetURDFRootLinks(links, &ee_root_links);
+
+        if (ee_root_links.size() != 1) {
+            throw std::runtime_error(
+                boost::str(boost::format("End-effector '%s' has %d root links.")
+                    % end_effector.name_ % ee_root_links.size()));
+        }
+
+        LinkConstPtr ee_root_link = ee_root_links.front();
+
+        // Assume that all active joints are gripper joints.
+        // TODO: Allow the user to override this behavior.
+        std::set<JointConstPtr> gripper_joints;
+        BOOST_FOREACH (JointConstPtr ee_joint, joints) {
+            bool const is_mimic = !!ee_joint->mimic;
+            bool const is_fixed = ee_joint->type == urdf::Joint::FIXED;
+
+            if (!is_mimic && !is_fixed) {
+                gripper_joints.insert(gripper_joints.begin(), ee_joint);
+            }
+        }
+
+        // Generate the OpenRAVE manipulator.
+        // TODO: Set the manipulator's base link from the manipulator group.
+        // TODO: What about the closing direction?
+        // TODO: What about the end-effector direction?
+        BOOST_AUTO(manip_info, boost::make_shared<OpenRAVE::RobotBase::ManipulatorInfo>());
+        manip_info->_name = end_effector.name_;
+        //manip_info->_sBaseLinkName =
+        //manip_info->_vdirection =
+        manip_info->_vClosingDirection.resize(gripper_joints.size(), 0.0);
+        manip_info->_sEffectorLinkName = ee_root_link->name;
+
+        BOOST_FOREACH (JointConstPtr joint, gripper_joints) {
+            manip_info->_vGripperJointNames.push_back(joint->name);
+        }
+        manip_infos.push_back(manip_info);
+
+        // TODO: Add CHOMP spheres as a separate collision group.
+
+        // Debug output.
+        std::cout << end_effector.name_ << "\n"
+                  << "  Links\n";
+        for (size_t i = 0; i < links.size(); ++i) {
+            std::cout << "    " << links[i]->name
+                      << ((links[i] == ee_root_link) ? " [root]" : "")
+                      << "\n";
+        }
+
+        std::cout << "  Joints\n";
+        for (size_t i = 0; i < joints.size(); ++i) {
+            std::cout << "    " << joints[i]->name
+                      << ((gripper_joints.count(joints[i])) ? " [gripper]" : "")
+                      << "\n";
+        }
+        std::cout << std::flush;
+    }
 
     // TODO: Add CHOMP spheres.
 }
@@ -423,8 +588,6 @@ void URDFLoader::ParseSRDF(srdf::Model &srdf, std::vector<OpenRAVE::KinBody::Lin
     // Get filename from input arguments
     std::string input_urdf, input_srdf;
     sinput >> input_urdf >> input_srdf;
-
-    std::cout << "| " << input_urdf << " | " << input_srdf << " |" << std::endl;
 
     OpenRAVE::KinBodyPtr body;
     std::string name;
@@ -449,7 +612,7 @@ void URDFLoader::ParseSRDF(srdf::Model &srdf, std::vector<OpenRAVE::KinBody::Lin
             throw OpenRAVE::openrave_exception("Failed to open SRDF file.");
         }
 
-        ParseSRDF(srdf_model, link_infos, joint_infos, manip_infos);
+        ParseSRDF(urdf_model, srdf_model, link_infos, joint_infos, manip_infos);
 
         // Cast all of the vector contents to const.
         std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos_const = MakeConst(link_infos);
