@@ -462,6 +462,52 @@ namespace or_urdf
     }
   }
 
+void URDFLoader::ParseYAML(YAML::Node const &node, 
+                           std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
+                           std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos,
+                           std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> &manip_infos)
+{
+    std::map<std::string, OpenRAVE::KinBody::LinkInfoPtr> link_map;
+    BOOST_FOREACH (OpenRAVE::KinBody::LinkInfoPtr link_info, link_infos) {
+        link_map[link_info->_name] = link_info;
+    }
+    
+    // Manipiulators
+    YAML::Node const &manipulators_yaml = node["manipulators"];
+    for (size_t i = 0; i < manipulators_yaml.size(); ++i) {
+        YAML::Node const &manipulator_yaml = manipulators_yaml[i];
+        BOOST_AUTO(manip_info, boost::make_shared<OpenRAVE::RobotBase::ManipulatorInfo>());
+        manipulator_yaml["name"] >> manip_info->_name;
+        manipulator_yaml["base_link"] >> manip_info->_sBaseLinkName;
+        manipulator_yaml["ee_link"] >> manip_info->_sEffectorLinkName;
+        manipulator_yaml["closing_direction"] >> manip_info->_vClosingDirection;
+        manipulator_yaml["gripper_joints"] >> manip_info->_vGripperJointNames;
+        manip_infos.push_back(manip_info);
+    }
+
+    // Link adjacencies.
+    YAML::Node const &adjacent_yaml = node["adjacent"];
+    for (size_t i = 0; i < adjacent_yaml.size(); ++i) {
+        std::string const &link1_name = adjacent_yaml[i][0].to<std::string>();
+        std::string const &link2_name = adjacent_yaml[i][1].to<std::string>();
+        OpenRAVE::KinBody::LinkInfoPtr link1_info = link_map[link1_name];
+        OpenRAVE::KinBody::LinkInfoPtr link2_info = link_map[link1_name];
+
+        if (!link1_info) {
+            throw OPENRAVE_EXCEPTION_FORMAT("There is no link named %s.", link1_name.c_str(),
+                                            OpenRAVE::ORE_Failed);
+        } else if (!link2_info) {
+            throw OPENRAVE_EXCEPTION_FORMAT("There is no link named %s.", link2_name.c_str(),
+                                            OpenRAVE::ORE_Failed);
+        }
+
+        link1_info->_vForcedAdjacentLinks.push_back(link2_name);
+        link2_info->_vForcedAdjacentLinks.push_back(link1_name);
+    }
+
+    //
+}
+
 void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
                            std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
                            std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos,
@@ -602,17 +648,22 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
     std::vector<OpenRAVE::KinBody::JointInfoPtr> joint_infos;
     ParseURDF(urdf_model, link_infos, joint_infos);
 
-    // Optionally load the SRDF to create a Robot.
     if (!input_srdf.empty()) {
-        std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> manip_infos;
-        std::vector<OpenRAVE::RobotBase::AttachedSensorInfoPtr> sensor_infos;
+        // Load a YAML metadata file.
+        std::ifstream yaml_stream(input_srdf.c_str());
+        YAML::Parser parser(yaml_stream);
 
-        srdf::Model srdf_model;
-        if (!srdf_model.initFile(urdf_model, input_srdf)) {
-            throw OpenRAVE::openrave_exception("Failed to open SRDF file.");
+        YAML::Node doc;
+        if (!parser.GetNextDocument(doc)) {
+            throw std::runtime_error("Failed loading YAML file.");
         }
 
-        ParseSRDF(urdf_model, srdf_model, link_infos, joint_infos, manip_infos);
+
+        // Actually parsing the URDF file is disabled because the Fuerte "srdf"
+        // package is woefully incomplete. We will finish SRDF support in Groovy.
+        std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> manip_infos;
+        std::vector<OpenRAVE::RobotBase::AttachedSensorInfoPtr> sensor_infos;
+        ParseYAML(doc, link_infos, joint_infos, manip_infos);
 
         // Cast all of the vector contents to const.
         std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos_const = MakeConst(link_infos);
@@ -623,7 +674,6 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
         OpenRAVE::RobotBasePtr robot = OpenRAVE::RaveCreateRobot(GetEnv(), "");
         robot->Init(link_infos_const, joint_infos_const, manip_infos_const, sensor_infos_const);
         body = robot;
-        // TODO: Set the name.
     }
     // It's just a URDF file, so create a KinBody.
     else {

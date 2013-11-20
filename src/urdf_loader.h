@@ -8,10 +8,10 @@
 #ifndef URDF_LOADER_H
 #define URDF_LOADER_H
 
-#include <tinyxml.h>
 #include <openrave/openrave.h>
 #include <openrave/plugin.h>
 #include <boost/bind.hpp>
+#include <yaml-cpp/yaml.h>
 #include <urdf/model.h>
 #include <srdf/model.h>
 
@@ -37,7 +37,13 @@ namespace or_urdf
     virtual ~URDFLoader() {}
 
     void ParseURDF(urdf::Model &model, std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
-                                       std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos);
+                   std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos);
+
+    void ParseYAML(YAML::Node const &node, 
+                   std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
+                   std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos,
+                   std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> &manip_infos);
+
     void ParseSRDF(urdf::Model const &urdf,
                    srdf::Model const &srdf,
                    std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
