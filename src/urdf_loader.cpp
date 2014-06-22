@@ -19,9 +19,11 @@
 #include <yaml-cpp/yaml.h>
 
 /** Boilerplate plugin definition for OpenRAVE */
-OpenRAVE::InterfaceBasePtr CreateInterfaceValidated(OpenRAVE::InterfaceType type, const std::string& interfacename, std::istream& sinput, OpenRAVE::EnvironmentBasePtr env)
+OpenRAVE::InterfaceBasePtr CreateInterfaceValidated(
+        OpenRAVE::InterfaceType type, const std::string& interfacename,
+        std::istream& sinput, OpenRAVE::EnvironmentBasePtr env)
 {
-  if( type == OpenRAVE::PT_Module && interfacename == "urdf" ) {
+  if (type == OpenRAVE::PT_Module && interfacename == "urdf") {
     return OpenRAVE::InterfaceBasePtr(new or_urdf::URDFLoader(env));
   } else {
     return OpenRAVE::InterfaceBasePtr();
@@ -46,12 +48,14 @@ void GetURDFRootLinks(std::vector<boost::shared_ptr<urdf::Link const> > const &l
     }
 }
 
-srdf::Model::Group const &GetSRDFGroup(std::map<std::string, srdf::Model::Group> const &groups,
-                                       std::string const &name)
+srdf::Model::Group const &GetSRDFGroup(
+    std::map<std::string, srdf::Model::Group> const &groups,
+    std::string const &name)
 {
     BOOST_AUTO(it, groups.find(name));
     if (it == groups.end()) {
-        throw std::runtime_error(boost::str(boost::format("Group '%s' does not exist.") % name));
+        throw std::runtime_error(boost::str(
+                boost::format("Group '%s' does not exist.") % name));
     }
     return it->second;
 }
@@ -63,16 +67,19 @@ void ExtractSRDFGroup(urdf::Model const &urdf, srdf::Model::Group const &group,
     BOOST_ASSERT(links);
     BOOST_ASSERT(joints);
 
+    typedef boost::shared_ptr<urdf::Link const> LinkConstPtr;
+    typedef boost::shared_ptr<urdf::Joint const> JointConstPtr;
+
     if (!group.chains_.empty()) {
         std::string base_link_name, tip_link_name;
         BOOST_FOREACH (boost::tie(base_link_name, tip_link_name), group.chains_) {
             // Crawl the kinematic chain from bottom-up.
-            boost::shared_ptr<urdf::Link const> base_link = urdf.getLink(base_link_name);
-            boost::shared_ptr<urdf::Link const> tip_link = urdf.getLink(tip_link_name);
-            boost::shared_ptr<urdf::Link const> link_ptr = tip_link;
+            LinkConstPtr base_link = urdf.getLink(base_link_name);
+            LinkConstPtr tip_link = urdf.getLink(tip_link_name);
+            LinkConstPtr link_ptr = tip_link;
 
             do {
-                boost::shared_ptr<urdf::Joint const> parent_joint = link_ptr->parent_joint;
+                JointConstPtr parent_joint = link_ptr->parent_joint;
                 links->push_back(link_ptr);
                 joints->push_back(parent_joint);
                 link_ptr = link_ptr->getParent();
@@ -85,8 +92,8 @@ void ExtractSRDFGroup(urdf::Model const &urdf, srdf::Model::Group const &group,
     if (!group.joints_.empty()) {
         // Joints implicitly include their child link.
         BOOST_FOREACH (std::string const &joint_name, group.joints_) {
-            boost::shared_ptr<urdf::Joint const> joint = urdf.getJoint(joint_name);
-            boost::shared_ptr<urdf::Link const> child_link = urdf.getLink(joint->child_link_name);
+            JointConstPtr joint = urdf.getJoint(joint_name);
+            LinkConstPtr child_link = urdf.getLink(joint->child_link_name);
             links->push_back(child_link);
             joints->push_back(joint);
         }
@@ -95,8 +102,8 @@ void ExtractSRDFGroup(urdf::Model const &urdf, srdf::Model::Group const &group,
     if (!group.links_.empty()) {
         // Links implicitly include their parent joint.
         BOOST_FOREACH (std::string const &link_name, group.links_) {
-            boost::shared_ptr<urdf::Link const> link = urdf.getLink(link_name);
-            boost::shared_ptr<urdf::Joint const> parent_joint = link->parent_joint;
+            LinkConstPtr link = urdf.getLink(link_name);
+            JointConstPtr parent_joint = link->parent_joint;
 
             links->push_back(link);
             if (parent_joint) {
@@ -121,7 +128,8 @@ void DestroyPlugin()
 namespace or_urdf
 {
   template <class T>
-  std::vector<boost::shared_ptr<T const> > MakeConst(std::vector<boost::shared_ptr<T> > const &vconst)
+  std::vector<boost::shared_ptr<T const> > MakeConst(
+          std::vector<boost::shared_ptr<T> > const &vconst)
   {
       std::vector<boost::shared_ptr<T const> > v;
       v.reserve(vconst.size());
@@ -666,19 +674,26 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
         ParseYAML(doc, link_infos, joint_infos, manip_infos);
 
         // Cast all of the vector contents to const.
-        std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos_const = MakeConst(link_infos);
-        std::vector<OpenRAVE::KinBody::JointInfoConstPtr> joint_infos_const = MakeConst(joint_infos);
-        std::vector<OpenRAVE::RobotBase::ManipulatorInfoConstPtr> manip_infos_const = MakeConst(manip_infos);
-        std::vector<OpenRAVE::RobotBase::AttachedSensorInfoConstPtr> sensor_infos_const = MakeConst(sensor_infos);
+        std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos_const
+            = MakeConst(link_infos);
+        std::vector<OpenRAVE::KinBody::JointInfoConstPtr> joint_infos_const
+            = MakeConst(joint_infos);
+        std::vector<OpenRAVE::RobotBase::ManipulatorInfoConstPtr> manip_infos_const
+            = MakeConst(manip_infos);
+        std::vector<OpenRAVE::RobotBase::AttachedSensorInfoConstPtr> sensor_infos_const
+            = MakeConst(sensor_infos);
 
         OpenRAVE::RobotBasePtr robot = OpenRAVE::RaveCreateRobot(GetEnv(), "");
-        robot->Init(link_infos_const, joint_infos_const, manip_infos_const, sensor_infos_const);
+        robot->Init(link_infos_const, joint_infos_const, manip_infos_const,
+                    sensor_infos_const);
         body = robot;
     }
     // It's just a URDF file, so create a KinBody.
     else {
-        std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos_const = MakeConst(link_infos);
-        std::vector<OpenRAVE::KinBody::JointInfoConstPtr> joint_infos_const = MakeConst(joint_infos);
+        std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos_const
+            = MakeConst(link_infos);
+        std::vector<OpenRAVE::KinBody::JointInfoConstPtr> joint_infos_const
+            = MakeConst(joint_infos);
 
         body = OpenRAVE::RaveCreateKinBody(GetEnv(), "");
         body->Init(link_infos_const, joint_infos_const);
