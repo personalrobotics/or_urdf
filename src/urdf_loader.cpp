@@ -392,6 +392,12 @@ namespace or_urdf
             = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>(*geom_info);
         link_info->_mapExtraGeometries["visual"].push_back(geom_info_clone);
       }
+
+      // Verify that the "visual" and "spheres" groups always exist. Recall 
+      // that accessing an element with operator[] creates it using the default
+      // no-arg constructor if it does not already exist.
+      link_info->_mapExtraGeometries["visual"];
+      link_info->_mapExtraGeometries["spheres"];
       link_infos.push_back(link_info);
     }
 
@@ -665,7 +671,40 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
         manip_infos.push_back(manip_info);
     }
 
-    // TODO: Add CHOMP spheres.
+    // Add the sphere approximation to a geometry group.
+    BOOST_FOREACH (srdf::Model::LinkSpheres const &spheres,
+                   srdf.getLinkSphereApproximations()) {
+        // Find the corresponding OpenRAVE link.
+        OpenRAVE::KinBody::LinkInfoPtr link_info;
+        BOOST_FOREACH (OpenRAVE::KinBody::LinkInfoPtr candidate, link_infos) {
+            if (candidate->_name == spheres.link_) {
+                link_info = candidate;
+                break;
+            }
+        }
+
+        if (!link_info) {
+            throw std::runtime_error(boost::str(
+                boost::format("Unable to create sphere geometry for link '%s':"
+                              " Link does not exist.") % spheres.link_));
+        }
+
+        // Add the spheres to a separate collision group.
+        std::vector<OpenRAVE::KinBody::GeometryInfoPtr> &sphere_infos
+                = link_info->_mapExtraGeometries["spheres"];
+        BOOST_FOREACH (srdf::Model::Sphere const &sphere, spheres.spheres_) {
+            // TODO: Spheres should be in the collision frame.
+            OpenRAVE::KinBody::GeometryInfoPtr sphere_info
+                    = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>();
+            sphere_info->_bVisible = true;
+            sphere_info->_bModifiable = true;
+            sphere_info->_type = OpenRAVE::GT_Sphere;
+            sphere_info->_vGeomData = sphere.radius_ * OpenRAVE::Vector(1, 1, 1);
+            sphere_info->_t.trans = OpenRAVE::Vector(
+                    sphere.center_x_, sphere.center_y_, sphere.center_z_);
+            sphere_infos.push_back(sphere_info);
+        }
+    }
 }
   
 /** Opens a URDF file and returns a robot in OpenRAVE */
