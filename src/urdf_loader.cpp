@@ -15,16 +15,15 @@
 #include <ros/package.h>
 #include <yaml-cpp/yaml.h>
 
-/** Boilerplate plugin definition for OpenRAVE */
 OpenRAVE::InterfaceBasePtr CreateInterfaceValidated(
         OpenRAVE::InterfaceType type, const std::string& interfacename,
         std::istream& sinput, OpenRAVE::EnvironmentBasePtr env)
 {
-  if (type == OpenRAVE::PT_Module && interfacename == "urdf") {
-    return OpenRAVE::InterfaceBasePtr(new or_urdf::URDFLoader(env));
-  } else {
-    return OpenRAVE::InterfaceBasePtr();
-  }
+    if (type == OpenRAVE::PT_Module && interfacename == "urdf") {
+        return OpenRAVE::InterfaceBasePtr(new or_urdf::URDFLoader(env));
+    } else {
+        return OpenRAVE::InterfaceBasePtr();
+    }
 }
 
 void GetURDFRootLinks(
@@ -127,121 +126,127 @@ void DestroyPlugin()
 {
 }
 
-namespace or_urdf
+namespace or_urdf {
+
+template <class T>
+std::vector<boost::shared_ptr<T const> > MakeConst(
+        std::vector<boost::shared_ptr<T> > const &vconst)
 {
-  template <class T>
-  std::vector<boost::shared_ptr<T const> > MakeConst(
-          std::vector<boost::shared_ptr<T> > const &vconst)
-  {
-      std::vector<boost::shared_ptr<T const> > v;
-      v.reserve(vconst.size());
+    std::vector<boost::shared_ptr<T const> > v;
+    v.reserve(vconst.size());
 
-      BOOST_FOREACH (boost::shared_ptr<T> const &x, vconst) {
-          v.push_back(x);
-      }
+    BOOST_FOREACH (boost::shared_ptr<T> const &x, vconst) {
+        v.push_back(x);
+    }
+    return v;
+}
 
-      return v;
-  }
-
-  /** Converts from URDF 3D vector to OpenRAVE 3D vector. */
-  OpenRAVE::Vector URDFVectorToRaveVector(const urdf::Vector3 &vector)
-  {
+/** Converts from URDF 3D vector to OpenRAVE 3D vector. */
+OpenRAVE::Vector URDFVectorToRaveVector(const urdf::Vector3 &vector)
+{
     return OpenRAVE::Vector(vector.x, vector.y, vector.z);
-  }
+}
 
-  /** Converts from URDF 3D rotation to OpenRAVE 3D vector. */
-  OpenRAVE::Vector URDFRotationToRaveVector(const urdf::Rotation &rotation)
-  {
+/** Converts from URDF 3D rotation to OpenRAVE 3D vector. */
+OpenRAVE::Vector URDFRotationToRaveVector(const urdf::Rotation &rotation)
+{
     return OpenRAVE::Vector(rotation.w, rotation.x, rotation.y, rotation.z);
-  }
+}
 
-  OpenRAVE::Vector URDFColorToRaveVector(const urdf::Color &color)
-  {
+OpenRAVE::Vector URDFColorToRaveVector(const urdf::Color &color)
+{
     return OpenRAVE::Vector(color.r, color.g, color.b, color.a);
-  }
+}
 
-  OpenRAVE::Transform URDFPoseToRaveTransform(const urdf::Pose &pose)
-  {
+OpenRAVE::Transform URDFPoseToRaveTransform(const urdf::Pose &pose)
+{
     return OpenRAVE::Transform(URDFRotationToRaveVector(pose.rotation),
                                URDFVectorToRaveVector(pose.position));
-  }
+}
   
-  /** Resolves URIs for file:// and package:// paths */
-  const std::string resolveURI(const std::string &path)
-  {
+/** Resolves URIs for file:// and package:// paths */
+std::string resolveURI(const std::string &path)
+{
     static std::map<std::string, std::string> package_cache;
     std::string uri = path;
 
     if (uri.find("file://") == 0) {
+        // Strip off the file://
+        uri.erase(0, strlen("file://"));
 
-      // Strip off the file://
-      uri.erase(0, strlen("file://"));
-
-      // Resolve the mesh path as a file URI
-      boost::filesystem::path file_path(uri);
-      return file_path.string();
-
+        // Resolve the mesh path as a file URI
+        boost::filesystem::path file_path(uri);
+        return file_path.string();
     } else if (uri.find("package://") == 0) {
+        // Strip off the package://
+        uri.erase(0, strlen("package://"));
 
-      // Strip off the package://
-      uri.erase(0, strlen("package://"));
-	
-      // Resolve the mesh path as a ROS package URI
-      size_t package_end = uri.find("/");
-      std::string package = uri.substr(0, package_end);
-      std::string package_path;
+        // Resolve the mesh path as a ROS package URI
+        size_t package_end = uri.find("/");
+        std::string package = uri.substr(0, package_end);
+        std::string package_path;
 
-      // Use the package cache if we have resolved this package before
-      std::map<std::string, std::string>::iterator it = package_cache.find(package);
-      if (it != package_cache.end()) {
-	package_path = it->second;
-      } else {
-	package_path = ros::package::getPath(package);
-	package_cache[package] = package_path;
-      }
-      
-      // Show a warning if the package was not resolved
-      if (package_path.empty())	{
-	RAVELOG_WARN("Unable to find package [%s].\n", package.c_str());
-	return "";
-      }
-      
-      // Append the remaining relative path
-      boost::filesystem::path file_path(package_path);
-      uri.erase(0, package_end);
-      file_path /= uri;
-      
-      // Return the canonical path
-      return file_path.string();
+        // Use the package cache if we have resolved this package before
+        std::map<std::string, std::string>::iterator it
+                = package_cache.find(package);
+        if (it != package_cache.end()) {
+            package_path = it->second;
+        } else {
+            package_path = ros::package::getPath(package);
+            package_cache[package] = package_path;
+        }
 
+        // Show a warning if the package was not resolved
+        if (package_path.empty()) {
+            RAVELOG_WARN("Unable to find package '%s'.\n", package.c_str());
+            return "";
+        }
+
+        // Append the remaining relative path
+        boost::filesystem::path file_path(package_path);
+        uri.erase(0, package_end);
+        file_path /= uri;
+
+        // Return the canonical path
+        return file_path.string();
     } else {
-      RAVELOG_WARN("Cannot handle mesh URI type [%s].\n");
-      return "";
+        RAVELOG_WARN("Cannot handle mesh URI type '%s'.\n");
+        return "";
     }
-  }
+}
 
   /** Converts URDF joint to an OpenRAVE joint string and a boolean
       representing whether the joint is moving or fixed */
-  const std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int type)
-  {
+std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int type)
+{
     switch(type) {
     case urdf::Joint::REVOLUTE:
-      return std::make_pair(OpenRAVE::KinBody::JointRevolute, true);
+        return std::make_pair(OpenRAVE::KinBody::JointRevolute, true);
+
     case urdf::Joint::PRISMATIC:
-      return std::make_pair(OpenRAVE::KinBody::JointSlider, true);
+        return std::make_pair(OpenRAVE::KinBody::JointSlider, true);
+
     case urdf::Joint::FIXED:
-      return std::make_pair(OpenRAVE::KinBody::JointHinge, false);
+        return std::make_pair(OpenRAVE::KinBody::JointHinge, false);
+
     case urdf::Joint::CONTINUOUS:
-      return std::make_pair(OpenRAVE::KinBody::JointHinge, true);
+        return std::make_pair(OpenRAVE::KinBody::JointHinge, true);
+
+    // TODO: Fill the rest of these joint types in!
     case urdf::Joint::PLANAR:
+        throw std::runtime_error("Planar joints are not supported.");
+
     case urdf::Joint::FLOATING:
+        throw std::runtime_error("Floating joints are not supported.");
+
     case urdf::Joint::UNKNOWN:
+        throw std::runtime_error("Unknown joints are not supported.");
+
     default:
-      // TODO: Fill the rest of these joint types in!
-      RAVELOG_ERROR("URDFLoader : Unable to determine joint type [%d].\n", type);
-      throw OpenRAVE::openrave_exception("Failed to convert URDF joint!");
+        throw std::runtime_error(boost::str(
+            boost::format("Unkonwn type of joint %d.") % type));
     }
-  }
+}
 
   void URDFLoader::ParseURDF(
         urdf::Model &model,
