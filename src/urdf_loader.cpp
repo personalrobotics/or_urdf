@@ -30,8 +30,9 @@ OpenRAVE::InterfaceBasePtr CreateInterfaceValidated(
   }
 }
 
-void GetURDFRootLinks(std::vector<boost::shared_ptr<urdf::Link const> > const &links,
-                      std::vector<boost::shared_ptr<urdf::Link const> >       *roots)
+void GetURDFRootLinks(
+        std::vector<boost::shared_ptr<urdf::Link const> > const &links,
+        std::vector<boost::shared_ptr<urdf::Link const> >       *roots)
 {
     typedef boost::shared_ptr<urdf::Link const> LinkConstPtr;
 
@@ -62,11 +63,11 @@ void ExtractSRDFGroup(urdf::Model const &urdf, srdf::Model::Group const &group,
                       std::vector<boost::shared_ptr<urdf::Link const> > *links,
                       std::vector<boost::shared_ptr<urdf::Joint const> > *joints)
 {
-    BOOST_ASSERT(links);
-    BOOST_ASSERT(joints);
-
     typedef boost::shared_ptr<urdf::Link const> LinkConstPtr;
     typedef boost::shared_ptr<urdf::Joint const> JointConstPtr;
+
+    BOOST_ASSERT(links);
+    BOOST_ASSERT(joints);
 
     if (!group.chains_.empty()) {
         std::string base_link_name, tip_link_name;
@@ -120,16 +121,13 @@ void ExtractSRDFGroup(urdf::Model const &urdf, srdf::Model::Group const &group,
     }
 }
 
-/** Boilerplate plugin definition for OpenRAVE */
 void GetPluginAttributesValidated(OpenRAVE::PLUGININFO& info)
 {
-  info.interfacenames[OpenRAVE::PT_Module].push_back("URDF");
+    info.interfacenames[OpenRAVE::PT_Module].push_back("URDF");
 }
 
-/** Boilerplate plugin definition for OpenRAVE */
 void DestroyPlugin()
 {
-  // Nothing to clean up!
 }
 
 namespace or_urdf
