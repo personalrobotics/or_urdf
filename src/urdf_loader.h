@@ -13,7 +13,7 @@
 #include <boost/bind.hpp>
 #include <yaml-cpp/yaml.h>
 #include <urdf/model.h>
-#include <srdf/model.h>
+#include <srdfdom/model.h>
 
 namespace or_urdf
 {
