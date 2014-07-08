@@ -516,7 +516,7 @@ void URDFLoader::ParseYAML(YAML::Node const &node,
         manipulator_yaml["name"] >> manip_info->_name;
         manipulator_yaml["base_link"] >> manip_info->_sBaseLinkName;
         manipulator_yaml["ee_link"] >> manip_info->_sEffectorLinkName;
-        manipulator_yaml["closing_direction"] >> manip_info->_vClosingDirection;
+        manipulator_yaml["closing_direction"] >> manip_info->_vChuckingDirection;
         manipulator_yaml["gripper_joints"] >> manip_info->_vGripperJointNames;
         manip_infos.push_back(manip_info);
     }
@@ -634,29 +634,30 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
         RAVELOG_INFO("Detected '%s' as root link of manipulator group '%s'.\n",
                      manip_root_link->name.c_str(), manip_group.name_.c_str());
                      
-        // Compute the root link of the end-effector.
+        // Find the parent link of the end-effector. This serves as the tip
+        // link of the manipulator.
+        // TODO: std::map<std::string, OpenRAVE::KinBody::LinkInfoPtr> link_map;
+        OpenRAVE::KinBody::LinkInfoPtr ee_root_link;
+        BOOST_AUTO(it, link_map.find(end_effector.parent_link_));
+        if (it != link_map.end()) {
+            ee_root_link = it->second;
+        } else {
+            throw std::runtime_error(boost::str(
+                boost::format("Unable to find end-effector parent "
+                              " link '%s'.") % end_effector.parent_link_));
+        }
+        RAVELOG_INFO("Found manipulator tip link '%s'.\n",
+                     ee_root_link->_name.c_str());
+
+        // Find active joints in the end-effector group. We will treat these as
+        // gripper joints.
         std::vector<LinkConstPtr> ee_links, ee_root_links;
         std::vector<JointConstPtr> ee_joints;
         ExtractSRDFGroup(urdf, ee_group, &ee_links, &ee_joints);
-        GetURDFRootLinks(ee_links, &ee_root_links);
 
-        if (ee_root_links.size() != 1) {
-            throw std::runtime_error(
-                boost::str(boost::format("End-effector '%s' has %d root links.")
-                    % end_effector.name_ % ee_root_links.size()));
-        }
-        LinkConstPtr ee_root_link = ee_root_links.front();
-        BOOST_ASSERT(ee_root_link);
-
-        RAVELOG_INFO("Found manipulator '%s' with base link '%s' and end-effector link '%s'.\n",
-                     manip_group.name_.c_str(),
-                     manip_root_link->name.c_str(),
-                     ee_root_link->name.c_str());
-
-        // Assume that all active joints are gripper joints.
-        // TODO: Allow the user to override this behavior.
-        size_t num_rejected_gripper_joints = 0;
         std::set<JointConstPtr> gripper_joints;
+        size_t num_rejected_gripper_joints = 0;
+
         BOOST_FOREACH (JointConstPtr ee_joint, ee_joints) {
             bool const is_mimic = !!ee_joint->mimic;
             bool const is_fixed = ee_joint->type == urdf::Joint::FIXED;
@@ -667,6 +668,7 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
                 num_rejected_gripper_joints++;
             }
         }
+
         RAVELOG_INFO("Found %d gripper joints for manipulator '%s';"
                      " ignored %d passive/mimic joints.\n",
                      gripper_joints.size(), manip_group.name_.c_str(),
@@ -675,12 +677,13 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
         // Generate the OpenRAVE manipulator.
         // TODO: What about the closing direction?
         // TODO: What about the end-effector direction?
-        BOOST_AUTO(manip_info, boost::make_shared<OpenRAVE::RobotBase::ManipulatorInfo>());
+        BOOST_AUTO(manip_info,
+                   boost::make_shared<OpenRAVE::RobotBase::ManipulatorInfo>());
         manip_info->_name = manip_group.name_;
         manip_info->_sBaseLinkName = manip_root_link->name;
         manip_info->_vdirection = OpenRAVE::Vector(0, 0, 1);
-        manip_info->_vClosingDirection.resize(gripper_joints.size(), 0.0);
-        manip_info->_sEffectorLinkName = ee_root_link->name;
+        manip_info->_vChuckingDirection.resize(gripper_joints.size(), 0.0);
+        manip_info->_sEffectorLinkName = ee_root_link->_name;
 
         BOOST_FOREACH (JointConstPtr joint, gripper_joints) {
             manip_info->_vGripperJointNames.push_back(joint->name);
