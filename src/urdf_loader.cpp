@@ -338,6 +338,7 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
         }
 
         case urdf::Geometry::SPHERE: {
+            RAVELOG_WARN("Creating sphere!\n");
             urdf::Sphere const &sphere
                     = dynamic_cast<const urdf::Sphere &>(*collision->geometry);
             geom_info->_vGeomData = sphere.radius * OpenRAVE::Vector(1, 1, 1);
@@ -386,28 +387,28 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
             const urdf::Mesh &mesh = dynamic_cast<const urdf::Mesh&>(*visual->geometry);
             geom_info->_filenamerender = resolveURI(mesh.filename);
             geom_info->_vRenderScale = OpenRAVE::Vector(1.0, 1.0, 1.0);
+
+            // If a material color is specified, use it.
+            boost::shared_ptr<urdf::Material> material = visual->material;
+            if (material) {
+                geom_info->_vDiffuseColor = URDFColorToRaveVector(material->color);
+                geom_info->_vAmbientColor = URDFColorToRaveVector(material->color);
+            }
+
+            // Add the render-only geometry to the standard geometry group for
+            // backwards compatability with QtCoin.
+            link_info->_vgeometryinfos.push_back(geom_info);
+
+            // Create a group dedicated to visual geometry for or_rviz.
+            OpenRAVE::KinBody::GeometryInfoPtr geom_info_clone
+                = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>(*geom_info);
+            link_info->_mapExtraGeometries["visual"].push_back(geom_info_clone);
             break;
         }
 
         default:
             RAVELOG_WARN("Link[%s]: Only trimeshes are supported for visual geometry.\n", link_ptr->name.c_str());
         }
-
-        // If a material color is specified, use it.
-        boost::shared_ptr<urdf::Material> material = visual->material;
-        if (material) {
-            geom_info->_vDiffuseColor = URDFColorToRaveVector(material->color);
-            geom_info->_vAmbientColor = URDFColorToRaveVector(material->color);
-        }
-
-        // Add the render-only geometry to the standard geometry group for
-        // backwards compatability with QtCoin.
-        link_info->_vgeometryinfos.push_back(geom_info);
-
-        // Create a group dedicated to visual geometry for or_rviz.
-        OpenRAVE::KinBody::GeometryInfoPtr geom_info_clone
-            = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>(*geom_info);
-        link_info->_mapExtraGeometries["visual"].push_back(geom_info_clone);
       }
 
       // Verify that the "visual" and "spheres" groups always exist. Recall 
