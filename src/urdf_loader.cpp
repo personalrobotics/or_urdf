@@ -47,7 +47,7 @@ srdf::Model::Group const &GetSRDFGroup(
     std::map<std::string, srdf::Model::Group> const &groups,
     std::string const &name)
 {
-    BOOST_AUTO(it, groups.find(name));
+    auto const it = groups.find(name);
     if (it == groups.end()) {
         throw std::runtime_error(boost::str(
                 boost::format("Group '%s' does not exist.") % name));
@@ -513,7 +513,7 @@ void URDFLoader::ParseYAML(YAML::Node const &node,
     YAML::Node const &manipulators_yaml = node["manipulators"];
     for (size_t i = 0; i < manipulators_yaml.size(); ++i) {
         YAML::Node const &manipulator_yaml = manipulators_yaml[i];
-        BOOST_AUTO(manip_info, boost::make_shared<OpenRAVE::RobotBase::ManipulatorInfo>());
+        auto manip_info = boost::make_shared<OpenRAVE::RobotBase::ManipulatorInfo>();
         manipulator_yaml["name"] >> manip_info->_name;
         manipulator_yaml["base_link"] >> manip_info->_sBaseLinkName;
         manipulator_yaml["ee_link"] >> manip_info->_sEffectorLinkName;
@@ -587,8 +587,8 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
     std::vector<srdf::Model::Group> const &raw_groups = srdf.getGroups();
     std::map<std::string, srdf::Model::Group> groups;
 
-    BOOST_FOREACH(srdf::Model::Group const &group, raw_groups) {
-        BOOST_AUTO(result, groups.insert(std::make_pair(group.name_, group)));
+    for (srdf::Model::Group const &group : raw_groups) {
+        auto result = groups.insert(std::make_pair(group.name_, group));
         if (!result.second) {
             throw std::runtime_error(boost::str(
                 boost::format("Duplicate SRDF group '%s'.") % group.name_));
@@ -596,7 +596,7 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
     }
 
     // Create manipulators.
-    BOOST_FOREACH (srdf::Model::EndEffector const &end_effector, srdf.getEndEffectors()) {
+    for (srdf::Model::EndEffector const &end_effector : srdf.getEndEffectors()) {
         typedef boost::shared_ptr<urdf::Link const> LinkConstPtr;
         typedef boost::shared_ptr<urdf::Joint const> JointConstPtr;
 
@@ -639,7 +639,7 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
         // link of the manipulator.
         // TODO: std::map<std::string, OpenRAVE::KinBody::LinkInfoPtr> link_map;
         OpenRAVE::KinBody::LinkInfoPtr ee_root_link;
-        BOOST_AUTO(it, link_map.find(end_effector.parent_link_));
+        auto it = link_map.find(end_effector.parent_link_);
         if (it != link_map.end()) {
             ee_root_link = it->second;
         } else {
@@ -678,8 +678,7 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
         // Generate the OpenRAVE manipulator.
         // TODO: What about the closing direction?
         // TODO: What about the end-effector direction?
-        BOOST_AUTO(manip_info,
-                   boost::make_shared<OpenRAVE::RobotBase::ManipulatorInfo>());
+        auto manip_info = boost::make_shared<OpenRAVE::RobotBase::ManipulatorInfo>();
         manip_info->_name = manip_group.name_;
         manip_info->_sBaseLinkName = manip_root_link->name;
         manip_info->_vdirection = OpenRAVE::Vector(0, 0, 1);

@@ -22,10 +22,12 @@ link_directories(
     ${YamlCpp_LIBRARY_DIRS}
     ${catkin_LIBRARY_DIRS}
 )
+add_definitions(--std=c++0x)
 
 # OpenRAVE plugin.
 add_library(${PROJECT_NAME}_plugin SHARED
     src/urdf_loader.cpp
+    src/or_serialization.cpp
 )
 target_link_libraries(${PROJECT_NAME}_plugin
     ${OpenRAVE_LIBRARIES}
