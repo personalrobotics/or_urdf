@@ -12,7 +12,7 @@
 
 namespace boost 
 { 
-  namespace filesystem3 
+  namespace filesystem
   {
     template < >
     path& path::append< typename path::iterator >( typename path::iterator begin, typename path::iterator end, const codecvt_type& cvt)
