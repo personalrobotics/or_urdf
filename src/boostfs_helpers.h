@@ -5,14 +5,17 @@
  * \date 2013
  */
 /* (C) Copyright 2013 Carnegie Mellon University */
+#include <boost/version.hpp>
 #include <boost/filesystem.hpp>
-
-#include "boost/filesystem.hpp"
 #include "boost/version.hpp"
 
 namespace boost 
 { 
+#if BOOST_VERSION >= 104900
   namespace filesystem
+#else
+  namespace filesystem3
+#endif
   {
     template < >
     path& path::append< typename path::iterator >( typename path::iterator begin, typename path::iterator end, const codecvt_type& cvt)
