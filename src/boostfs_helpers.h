@@ -11,7 +11,7 @@
 
 namespace boost 
 { 
-#if BOOST_VERSION >= 104900
+#if BOOST_VERSION > 104900
   namespace filesystem
 #else
   namespace filesystem3
