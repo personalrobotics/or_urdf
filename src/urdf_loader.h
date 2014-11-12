@@ -11,7 +11,6 @@
 #include <openrave/openrave.h>
 #include <openrave/plugin.h>
 #include <boost/bind.hpp>
-#include <yaml-cpp/yaml.h>
 #include <urdf/model.h>
 #include <srdfdom/model.h>
 
@@ -29,7 +28,8 @@ namespace or_urdf
       __description = "URDFLoader: Loader that imports URDF files.";
       _env = env;
 
-      RegisterCommand("load", boost::bind(&URDFLoader::load, this, _1, _2), "loads URDF from file");     
+      RegisterCommand("load", boost::bind(&URDFLoader::load, this, _1, _2),
+                      "load URDF and SRDF from file");
     }
 
     void Destroy() { RAVELOG_INFO("URDF loader unloaded from environment\n"); }
@@ -38,11 +38,6 @@ namespace or_urdf
 
     void ParseURDF(urdf::Model &model, std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
                    std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos);
-
-    void ParseYAML(YAML::Node const &node, 
-                   std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
-                   std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos,
-                   std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> &manip_infos);
 
     void ParseSRDF(urdf::Model const &urdf,
                    srdf::Model const &srdf,

@@ -5,7 +5,6 @@
  */
 #include "urdf_loader.h"
 #include "boostfs_helpers.h"
-#include "urdf_yaml_helpers.h"
 
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/foreach.hpp>
@@ -13,7 +12,6 @@
 #include <boost/format.hpp>
 #include <boost/filesystem.hpp>
 #include <ros/package.h>
-#include <yaml-cpp/yaml.h>
 
 OpenRAVE::InterfaceBasePtr CreateInterfaceValidated(
         OpenRAVE::InterfaceType type, const std::string& interfacename,
@@ -423,7 +421,7 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
     std::string joint_name; 
     boost::shared_ptr<urdf::Joint> joint_ptr;
 
-    // Parse the yaml file
+    // Parse the joint properties
     std::vector<boost::shared_ptr<urdf::Joint> > ordered_joints;
     BOOST_FOREACH(boost::tie(joint_name, joint_ptr), model.joints_) {
         ordered_joints.push_back(joint_ptr);
@@ -498,52 +496,6 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
       joint_infos.push_back(joint_info);
     }
   }
-
-void URDFLoader::ParseYAML(YAML::Node const &node, 
-                           std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
-                           std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos,
-                           std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> &manip_infos)
-{
-    std::map<std::string, OpenRAVE::KinBody::LinkInfoPtr> link_map;
-    BOOST_FOREACH (OpenRAVE::KinBody::LinkInfoPtr link_info, link_infos) {
-        link_map[link_info->_name] = link_info;
-    }
-    
-    // Manipiulators
-    YAML::Node const &manipulators_yaml = node["manipulators"];
-    for (size_t i = 0; i < manipulators_yaml.size(); ++i) {
-        YAML::Node const &manipulator_yaml = manipulators_yaml[i];
-        BOOST_AUTO(manip_info, boost::make_shared<OpenRAVE::RobotBase::ManipulatorInfo>());
-        manipulator_yaml["name"] >> manip_info->_name;
-        manipulator_yaml["base_link"] >> manip_info->_sBaseLinkName;
-        manipulator_yaml["ee_link"] >> manip_info->_sEffectorLinkName;
-        manipulator_yaml["closing_direction"] >> manip_info->_vChuckingDirection;
-        manipulator_yaml["gripper_joints"] >> manip_info->_vGripperJointNames;
-        manip_infos.push_back(manip_info);
-    }
-
-    // Link adjacencies.
-    YAML::Node const &adjacent_yaml = node["adjacent"];
-    for (size_t i = 0; i < adjacent_yaml.size(); ++i) {
-        std::string const &link1_name = adjacent_yaml[i][0].to<std::string>();
-        std::string const &link2_name = adjacent_yaml[i][1].to<std::string>();
-        OpenRAVE::KinBody::LinkInfoPtr link1_info = link_map[link1_name];
-        OpenRAVE::KinBody::LinkInfoPtr link2_info = link_map[link1_name];
-
-        if (!link1_info) {
-            throw OPENRAVE_EXCEPTION_FORMAT("There is no link named %s.", link1_name.c_str(),
-                                            OpenRAVE::ORE_Failed);
-        } else if (!link2_info) {
-            throw OPENRAVE_EXCEPTION_FORMAT("There is no link named %s.", link2_name.c_str(),
-                                            OpenRAVE::ORE_Failed);
-        }
-
-        link1_info->_vForcedAdjacentLinks.push_back(link2_name);
-        link2_info->_vForcedAdjacentLinks.push_back(link1_name);
-    }
-
-    //
-}
 
 void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
                            std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
