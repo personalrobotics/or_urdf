@@ -100,7 +100,7 @@ conversion as follows:
 - `<end_effector>`: defines a manipulator
     - `name`: sets the name of the OpenRAVE manipulator
     - `parent_group`: contains the manipulator DOFs (this is **required**)
-    - `group`: contains the gripper DOFs (this is **required**, but may be empty)
+    - `group`: contains the gripper DOFs (this is **required**, but the group be empty)
 - `<passive_joint>`: not used
 - `<virtual_joint>`: not used
 - `<group_state>`: not used
