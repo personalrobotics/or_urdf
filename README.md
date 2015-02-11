@@ -110,7 +110,6 @@ The following OpenRAVE properties have no equivalent in SRDF and, thus, must be
 manually configured on a `Robot` create by `or_urdf`:
 
 - Robot DOF weights (`robot.SetDOFWeights`)
-- Robot DOF weights (`robot.SetDOFWeights`)
 - Manipulator IK solver (`manipulaor.SetIkSolver`)
 - Manipulator closing/chucking direction (`manipulaor.SetClosingDirection` or
   `manipulator.SetChuckingDirection`, depending upon the version of OpenRAVE)
