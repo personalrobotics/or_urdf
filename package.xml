@@ -3,11 +3,12 @@
   <name>or_urdf</name>
   <version>0.1.0</version>
   <description>
-    OpenRAVE plugin for loading URDF files.
+    OpenRAVE plugin for loading URDF and SRDF files.
   </description>
-  <url type="repository">https://svn.personalrobotics.ri.cmu.edu/pr-ros-pkg/trunk/or_plugins/or_urdf</url>
+  <url type="repository">https://github.com/personalrobotics/or_urdf</url>
   <maintainer email="mkoval@cs.cmu.edu">Michael Koval</maintainer>
   <author email="mkoval@cs.cmu.edu">Michael Koval</author>
+  <author email="psigen@cs.cmu.edu">Pras Velagapudi</author>
   <license>BSD</license>
   <buildtool_depend>catkin</buildtool_depend>
   <build_depend>boost</build_depend>
