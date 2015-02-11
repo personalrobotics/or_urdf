@@ -135,7 +135,7 @@ module.
 
 ## License
 
-or_urdf is licensed under a BSD license. See LICENSE for more information.
+or_urdf is licensed under a BSD license. See `LICENSE` for more information.
 
 
 # Contributors
