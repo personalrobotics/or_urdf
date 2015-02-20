@@ -7,6 +7,7 @@
 #include "boostfs_helpers.h"
 
 #include <boost/algorithm/string/predicate.hpp>
+#include <boost/tuple/tuple.hpp>
 #include <boost/foreach.hpp>
 #include <boost/make_shared.hpp>
 #include <boost/format.hpp>
@@ -213,22 +214,24 @@ std::string resolveURI(const std::string &path)
     }
 }
 
-  /** Converts URDF joint to an OpenRAVE joint string and a boolean
-      representing whether the joint is moving or fixed */
-std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int type)
+  /** Converts URDF joint to an OpenRAVE joint string, a boolean
+      representing whether the joint is moving or fixed, and a boolean
+      representing whether this joint is circular */
+boost::tuple<OpenRAVE::KinBody::JointType, bool, bool>
+    URDFJointTypeToRaveJointType(int type)
 {
     switch(type) {
     case urdf::Joint::REVOLUTE:
-        return std::make_pair(OpenRAVE::KinBody::JointRevolute, true);
+        return boost::make_tuple(OpenRAVE::KinBody::JointRevolute, true, false);
 
     case urdf::Joint::PRISMATIC:
-        return std::make_pair(OpenRAVE::KinBody::JointSlider, true);
+        return boost::make_tuple(OpenRAVE::KinBody::JointSlider, true, false);
 
     case urdf::Joint::FIXED:
-        return std::make_pair(OpenRAVE::KinBody::JointHinge, false);
+        return boost::make_tuple(OpenRAVE::KinBody::JointHinge, false, false);
 
     case urdf::Joint::CONTINUOUS:
-        return std::make_pair(OpenRAVE::KinBody::JointHinge, true);
+        return boost::make_tuple(OpenRAVE::KinBody::JointHinge, true, true);
 
     // TODO: Fill the rest of these joint types in!
     case urdf::Joint::PLANAR:
@@ -434,23 +437,15 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
       joint_info->_linkname1 = joint_ptr->child_link_name;
       joint_info->_vanchor = URDFVectorToRaveVector(joint_ptr->parent_to_joint_origin_transform.position);
 
-      int urdf_joint_type = joint_ptr->type;
-      if (urdf_joint_type == urdf::Joint::REVOLUTE
-      || urdf_joint_type == urdf::Joint::CONTINUOUS) {
-          if (joint_ptr->limits) {
-              urdf_joint_type = urdf::Joint::REVOLUTE;
-          } else {
-              urdf_joint_type = urdf::Joint::CONTINUOUS;
-          }
-      }
-
       // Set the joint type. Some URDF joints correspond to disabled OpenRAVE
       // joints, so we'll appropriately set the corresponding IsActive flag.
       OpenRAVE::KinBody::JointType joint_type;
-      bool enabled;
-      boost::tie(joint_type, enabled) = URDFJointTypeToRaveJointType(urdf_joint_type);
+      bool is_enabled, is_circular;
+      boost::tie(joint_type, is_enabled, is_circular)
+          = URDFJointTypeToRaveJointType(joint_ptr->type);
       joint_info->_type = joint_type;
-      joint_info->_bIsActive = enabled;
+      joint_info->_bIsActive = is_enabled;
+      joint_info->_bIsCircular[0] = is_circular;
 
       // URDF only supports linear mimic joints with a constant offset. We map
       // that into the correct position (index 0) and velocity (index 1)
@@ -466,7 +461,7 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
 
       // Configure joint axis. Add an arbitrary axis if the joint is disabled.
       urdf::Vector3 joint_axis;
-      if (enabled) {
+      if (is_enabled) {
         joint_axis = joint_ptr->parent_to_joint_origin_transform.rotation * joint_ptr->axis;
       } else {
         joint_axis = urdf::Vector3(1, 0, 0);
@@ -483,15 +478,9 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
           joint_info->_vmaxtorque[0] = limits->effort;
       }
       // Fixed joints are just revolute joints with zero limits.
-      else if (!enabled) {
+      else if (!is_enabled) {
           joint_info->_vlowerlimit[0] = 0;
           joint_info->_vupperlimit[0] = 0;
-      }
-      // This is a hack to get continuous joints to work. The limits default to
-      // [0, 0], which inserts a fixed joint.
-      else if (urdf_joint_type == urdf::Joint::CONTINUOUS) {
-          joint_info->_vlowerlimit[0] = -M_PI;
-          joint_info->_vupperlimit[0] =  M_PI;
       }
       joint_infos.push_back(joint_info);
     }
