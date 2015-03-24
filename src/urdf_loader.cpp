@@ -322,11 +322,20 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
             geom_info->_filenamecollision = resolveURI(mesh.filename);
             geom_info->_type = OpenRAVE::GT_TriMesh;
 
+            // This doesn't seem to do anything, but we'll set it anyway.
+            geom_info->_vCollisionScale = URDFVectorToRaveVector(mesh.scale);
+
             boost::shared_ptr<OpenRAVE::TriMesh> trimesh
                     = boost::make_shared<OpenRAVE::TriMesh>();
             trimesh = GetEnv()->ReadTrimeshURI(trimesh,
                                                geom_info->_filenamecollision);
             if (trimesh) {
+                // The _vCollisionScale property does nothing, so we have to
+                // manually scale the mesh.
+                BOOST_FOREACH(OpenRAVE::Vector &vertex, trimesh->vertices) {
+                    vertex *= geom_info->_vCollisionScale;
+                }
+
                 geom_info->_meshcollision = *trimesh;
             } else {
                 RAVELOG_WARN("Link[%s]: Failed loading collision mesh %s\n",
@@ -384,7 +393,7 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
         case urdf::Geometry::MESH: {
             const urdf::Mesh &mesh = dynamic_cast<const urdf::Mesh&>(*visual->geometry);
             geom_info->_filenamerender = resolveURI(mesh.filename);
-            geom_info->_vRenderScale = OpenRAVE::Vector(1.0, 1.0, 1.0);
+            geom_info->_vRenderScale = URDFVectorToRaveVector(mesh.scale);
 
             // If a material color is specified, use it.
             boost::shared_ptr<urdf::Material> material = visual->material;
