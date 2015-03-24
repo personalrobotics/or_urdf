@@ -384,7 +384,7 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
         case urdf::Geometry::MESH: {
             const urdf::Mesh &mesh = dynamic_cast<const urdf::Mesh&>(*visual->geometry);
             geom_info->_filenamerender = resolveURI(mesh.filename);
-            geom_info->_vRenderScale = OpenRAVE::Vector(1.0, 1.0, 1.0);
+            geom_info->_vRenderScale = OpenRAVE::Vector(mesh.scale.x, mesh.scale.y, mesh.scale.z);
 
             // If a material color is specified, use it.
             boost::shared_ptr<urdf::Material> material = visual->material;
