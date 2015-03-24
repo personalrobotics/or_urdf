@@ -538,8 +538,8 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
         link2_info->_vForcedAdjacentLinks.push_back(link1_name);
         num_adjacent++;
     }
-    RAVELOG_INFO("Disabled collisions between %d pairs of joints.\n",
-                 num_adjacent);
+    RAVELOG_DEBUG("Disabled collisions between %d pairs of joints.\n",
+                   num_adjacent);
 
     // TODO: Passive joints.
 
@@ -563,7 +563,7 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
 
         // Get the end-effector group its associated mainpulator. We assume
         // that the parent group of an end-effector is a manipulator.
-        RAVELOG_INFO("Loading '%s' end-effector group '%s'.\n",
+        RAVELOG_DEBUG("Loading '%s' end-effector group '%s'.\n",
                      end_effector.name_.c_str(),
                      end_effector.component_group_.c_str());
         srdf::Model::Group const &ee_group = GetSRDFGroup(groups, end_effector.component_group_);
@@ -573,7 +573,7 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
                 boost::format("End-effector '%s' has no parent group.\n")
                     % end_effector.name_));
         }
-        RAVELOG_INFO("Loading '%s' manipulator group '%s'.\n",
+        RAVELOG_DEBUG("Loading '%s' manipulator group '%s'.\n",
                      end_effector.name_.c_str(),
                      end_effector.parent_group_.c_str());
         srdf::Model::Group const &manip_group = GetSRDFGroup(groups, end_effector.parent_group_);
@@ -583,7 +583,7 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
         std::vector<JointConstPtr> manip_joints;
         ExtractSRDFGroup(urdf, manip_group, &manip_links, &manip_joints);
         GetURDFRootLinks(manip_links, &manip_root_links);
-        RAVELOG_INFO("Manipulator group '%s' contains %d links and %d joints.\n",
+        RAVELOG_DEBUG("Manipulator group '%s' contains %d links and %d joints.\n",
                      manip_group.name_.c_str(), manip_links.size(), manip_joints.size());
 
         if (manip_root_links.size() != 1) {
@@ -593,7 +593,7 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
         }
         LinkConstPtr manip_root_link = manip_root_links.front();
         BOOST_ASSERT(manip_root_link);
-        RAVELOG_INFO("Detected '%s' as root link of manipulator group '%s'.\n",
+        RAVELOG_DEBUG("Detected '%s' as root link of manipulator group '%s'.\n",
                      manip_root_link->name.c_str(), manip_group.name_.c_str());
                      
         // Find the parent link of the end-effector. This serves as the tip
@@ -608,7 +608,7 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
                 boost::format("Unable to find end-effector parent "
                               " link '%s'.") % end_effector.parent_link_));
         }
-        RAVELOG_INFO("Found manipulator tip link '%s'.\n",
+        RAVELOG_DEBUG("Found manipulator tip link '%s'.\n",
                      ee_root_link->_name.c_str());
 
         // Find active joints in the end-effector group. We will treat these as
@@ -631,7 +631,7 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
             }
         }
 
-        RAVELOG_INFO("Found %d gripper joints for manipulator '%s';"
+        RAVELOG_DEBUG("Found %d gripper joints for manipulator '%s';"
                      " ignored %d passive/mimic joints.\n",
                      gripper_joints.size(), manip_group.name_.c_str(),
                      num_rejected_gripper_joints);
