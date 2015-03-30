@@ -2,8 +2,8 @@
 Changelog for package or_urdf
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+0.2.0 (2015-03-30)
+------------------
 * Replaced RAVELOG_INFO with RAVELOG_DEBUG.
 * Manually apply the URDF collision scale to meshes.
 * Added support for scaling visual meshes.
