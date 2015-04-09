@@ -61,10 +61,6 @@ manually configured on a `KinBody` created by or_urdf:
 
 - Acceleration limits (`robot.SetDOFAccelerationLimits`)
 - DOF resolutions (`robot.SetDOFResolutions`)
-- DOF weights (`robot.SetDOFWeights`)
-- Closing direction (`manipulator.SetClosingDirection` or `manipulator.SetChuckingDirection`)
-- IK solver (`manipulator.SetIKSolver`)
-- Tool frame (`manipulator.SetLocalToolTransform` and `manipulator.SetLocalToolDirection`)
 - Mass and inertia properties are **currently untested**
 
 The `load` command programmatically creates a `KinBody` from the URDF by
