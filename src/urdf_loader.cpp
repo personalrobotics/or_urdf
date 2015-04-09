@@ -208,8 +208,19 @@ std::string resolveURI(const std::string &path)
         // Return the canonical path
         return file_path.string();
     } else {
-        RAVELOG_WARN("Cannot handle mesh URI type '%s'.\n");
+        RAVELOG_WARN("Cannot handle this type of URI.\n");
         return "";
+    }
+}
+
+std::string resolveURIorPath(const std::string &path)
+{
+    using boost::algorithm::starts_with;
+
+    if (starts_with(path, "package://") || starts_with(path, "package://")) {
+        return resolveURI(path);
+    } else {
+        return path;
     }
 }
 
@@ -706,8 +717,11 @@ bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
 {
     try {
         // Get filename from input arguments
-        std::string input_urdf, input_srdf;
-        sinput >> input_urdf >> input_srdf;
+        std::string input_urdf_uri, input_srdf_uri;
+        sinput >> input_urdf_uri >> input_srdf_uri;
+
+        std::string const input_urdf = resolveURIorPath(input_urdf_uri);
+        std::string const input_srdf = resolveURIorPath(input_srdf_uri);
 
         OpenRAVE::KinBodyPtr body;
         std::string name;
