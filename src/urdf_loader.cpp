@@ -443,15 +443,7 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
       joint_info->_linkname1 = joint_ptr->child_link_name;
       joint_info->_vanchor = URDFVectorToRaveVector(joint_ptr->parent_to_joint_origin_transform.position);
 
-      int urdf_joint_type = joint_ptr->type;
-      if (urdf_joint_type == urdf::Joint::REVOLUTE
-      || urdf_joint_type == urdf::Joint::CONTINUOUS) {
-          if (joint_ptr->limits) {
-              urdf_joint_type = urdf::Joint::REVOLUTE;
-          } else {
-              urdf_joint_type = urdf::Joint::CONTINUOUS;
-          }
-      }
+      int const urdf_joint_type = joint_ptr->type;
 
       // Set the joint type. Some URDF joints correspond to disabled OpenRAVE
       // joints, so we'll appropriately set the corresponding IsActive flag.
@@ -460,6 +452,7 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
       boost::tie(joint_type, enabled) = URDFJointTypeToRaveJointType(urdf_joint_type);
       joint_info->_type = joint_type;
       joint_info->_bIsActive = enabled;
+      joint_info->_bIsCircular[0] = (urdf_joint_type == urdf::Joint::CONTINUOUS);
 
       // URDF only supports linear mimic joints with a constant offset. We map
       // that into the correct position (index 0) and velocity (index 1)
@@ -496,15 +489,10 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
           joint_info->_vlowerlimit[0] = 0;
           joint_info->_vupperlimit[0] = 0;
       }
-
-      // Ignore limits on continuous joints and set them to +/- infinity. This
-      // also solves a problem where continuous joints default to [ 0, 0 ]
-      // limits, which creates a fixed joint.
-      if (urdf_joint_type == urdf::Joint::CONTINUOUS) {
-          OpenRAVE::dReal const inf
-              = std::numeric_limits<OpenRAVE::dReal>::infinity();
-          joint_info->_vlowerlimit[0] = -inf;
-          joint_info->_vupperlimit[0] = +inf;
+      // Default to +/- 2*PI. This is the same default used by OpenRAVE.
+      else {
+          joint_info->_vlowerlimit[0] = -M_PI;
+          joint_info->_vupperlimit[0] =  M_PI;
       }
       joint_infos.push_back(joint_info);
     }
