@@ -443,15 +443,7 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
       joint_info->_linkname1 = joint_ptr->child_link_name;
       joint_info->_vanchor = URDFVectorToRaveVector(joint_ptr->parent_to_joint_origin_transform.position);
 
-      int urdf_joint_type = joint_ptr->type;
-      if (urdf_joint_type == urdf::Joint::REVOLUTE
-      || urdf_joint_type == urdf::Joint::CONTINUOUS) {
-          if (joint_ptr->limits) {
-              urdf_joint_type = urdf::Joint::REVOLUTE;
-          } else {
-              urdf_joint_type = urdf::Joint::CONTINUOUS;
-          }
-      }
+      int const urdf_joint_type = joint_ptr->type;
 
       // Set the joint type. Some URDF joints correspond to disabled OpenRAVE
       // joints, so we'll appropriately set the corresponding IsActive flag.
@@ -460,6 +452,7 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
       boost::tie(joint_type, enabled) = URDFJointTypeToRaveJointType(urdf_joint_type);
       joint_info->_type = joint_type;
       joint_info->_bIsActive = enabled;
+      joint_info->_bIsCircular[0] = (urdf_joint_type == urdf::Joint::CONTINUOUS);
 
       // URDF only supports linear mimic joints with a constant offset. We map
       // that into the correct position (index 0) and velocity (index 1)
@@ -496,12 +489,21 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
           joint_info->_vlowerlimit[0] = 0;
           joint_info->_vupperlimit[0] = 0;
       }
-      // This is a hack to get continuous joints to work. The limits default to
-      // [0, 0], which inserts a fixed joint.
-      else if (urdf_joint_type == urdf::Joint::CONTINUOUS) {
+      // Default to +/- 2*PI. This is the same default used by OpenRAVE for
+      // revolute joints.
+      else {
           joint_info->_vlowerlimit[0] = -M_PI;
           joint_info->_vupperlimit[0] =  M_PI;
       }
+
+      // Force continuous joints to have +/- PI limits. Otherwise, the internal
+      // _vcircularlowerlimit and _vcircularupperlimit values will be set to
+      // zero. This causes OpenRAVE::utils::NormalizeCircularAngle to crash.
+      if (urdf_joint_type == urdf::Joint::CONTINUOUS) {
+          joint_info->_vlowerlimit[0] = -M_PI;
+          joint_info->_vupperlimit[0] =  M_PI;
+      }
+
       joint_infos.push_back(joint_info);
     }
   }
