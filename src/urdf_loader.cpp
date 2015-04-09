@@ -489,11 +489,21 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
           joint_info->_vlowerlimit[0] = 0;
           joint_info->_vupperlimit[0] = 0;
       }
-      // Default to +/- 2*PI. This is the same default used by OpenRAVE.
+      // Default to +/- 2*PI. This is the same default used by OpenRAVE for
+      // revolute joints.
       else {
           joint_info->_vlowerlimit[0] = -M_PI;
           joint_info->_vupperlimit[0] =  M_PI;
       }
+
+      // Force continuous joints to have +/- PI limits. Otherwise, the internal
+      // _vcircularlowerlimit and _vcircularupperlimit values will be set to
+      // zero. This causes OpenRAVE::utils::NormalizeCircularAngle to crash.
+      if (urdf_joint_type == urdf::Joint::CONTINUOUS) {
+          joint_info->_vlowerlimit[0] = -M_PI;
+          joint_info->_vupperlimit[0] =  M_PI;
+      }
+
       joint_infos.push_back(joint_info);
     }
   }
