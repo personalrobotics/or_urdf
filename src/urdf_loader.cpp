@@ -496,11 +496,15 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
           joint_info->_vlowerlimit[0] = 0;
           joint_info->_vupperlimit[0] = 0;
       }
-      // This is a hack to get continuous joints to work. The limits default to
-      // [0, 0], which inserts a fixed joint.
-      else if (urdf_joint_type == urdf::Joint::CONTINUOUS) {
-          joint_info->_vlowerlimit[0] = -M_PI;
-          joint_info->_vupperlimit[0] =  M_PI;
+
+      // Ignore limits on continuous joints and set them to +/- infinity. This
+      // also solves a problem where continuous joints default to [ 0, 0 ]
+      // limits, which creates a fixed joint.
+      if (urdf_joint_type == urdf::Joint::CONTINUOUS) {
+          OpenRAVE::dReal const inf
+              = std::numeric_limits<OpenRAVE::dReal>::infinity();
+          joint_info->_vlowerlimit[0] = -inf;
+          joint_info->_vupperlimit[0] = +inf;
       }
       joint_infos.push_back(joint_info);
     }
