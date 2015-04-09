@@ -217,7 +217,7 @@ std::string resolveURIorPath(const std::string &path)
 {
     using boost::algorithm::starts_with;
 
-    if (starts_with(path, "package://") || starts_with(path, "package://")) {
+    if (starts_with(path, "package://") || starts_with(path, "file://")) {
         return resolveURI(path);
     } else {
         return path;
