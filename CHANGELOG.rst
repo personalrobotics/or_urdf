@@ -2,8 +2,8 @@
 Changelog for package or_urdf
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+0.3.0 (2015-04-15)
+------------------
 * Update README.md
 * Added some more unsupported features to the README
 * Fixed a typo (thanks @cdellin!)
