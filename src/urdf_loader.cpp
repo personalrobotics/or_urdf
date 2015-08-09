@@ -316,8 +316,7 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
       }
       
       // Set information for collision geometry
-      boost::shared_ptr<urdf::Collision> collision = link_ptr->collision;
-      if (collision) {
+      BOOST_FOREACH (boost::shared_ptr<urdf::Collision> collision, link_ptr->collision_array) {
         OpenRAVE::KinBody::GeometryInfoPtr geom_info
                 = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>();
 
