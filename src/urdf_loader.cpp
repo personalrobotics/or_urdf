@@ -758,7 +758,8 @@ bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
 
             OpenRAVE::RobotBasePtr robot = OpenRAVE::RaveCreateRobot(GetEnv(), "");
             robot->Init(link_infos_const, joint_infos_const, manip_infos_const,
-                        sensor_infos_const);
+                        sensor_infos_const,
+                        input_urdf_uri + " " + input_srdf_uri);
             body = robot;
         }
         // It's just a URDF file, so create a KinBody.
@@ -769,7 +770,7 @@ bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
                 = MakeConst(joint_infos);
 
             body = OpenRAVE::RaveCreateKinBody(GetEnv(), "");
-            body->Init(link_infos_const, joint_infos_const);
+            body->Init(link_infos_const, joint_infos_const, input_urdf_uri);
         }
 
         body->SetName(urdf_model.getName());
