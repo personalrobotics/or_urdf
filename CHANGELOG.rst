@@ -2,8 +2,8 @@
 Changelog for package or_urdf
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Forthcoming
------------
+0.4.0 (2015-10-12)
+------------------
 * Added support for multiple collision objects within one link (`#13 <https://github.com/personalrobotics/or_urdf/issues/13>`_)
 * Added missing dependency on OpenRAVE
 * Set the source URI of loaded bodies (`#14 <https://github.com/personalrobotics/or_urdf/issues/14>`_)
