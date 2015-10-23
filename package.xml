@@ -21,4 +21,6 @@
   <run_depend>urdf</run_depend>
   <run_depend>srdfdom</run_depend>
   <run_depend>roslib</run_depend>
+  <test_depend>python</test_depend>
+  <test_depend>python-nose</test_depend>
 </package>
