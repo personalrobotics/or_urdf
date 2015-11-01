@@ -1,5 +1,7 @@
 # or_urdf
 
+[![Build Status](https://travis-ci.org/personalrobotics/or_urdf.svg?branch=master)](https://travis-ci.org/personalrobotics/or_urdf)
+
 or_urdf is an OpenRAVE plugin for loading a URDF and, optionally, SRDF file as
 an OpenRAVE `KinBody` or `Robot`. This package provides the OpenRAVE `URDF`
 module through a plugin. This plugin can be instantiated using the following
