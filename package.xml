@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <package>
   <name>or_urdf</name>
-  <version>0.3.0</version>
+  <version>0.4.0</version>
   <description>
     OpenRAVE plugin for loading URDF and SRDF files.
   </description>
@@ -13,14 +13,16 @@
   <buildtool_depend>catkin</buildtool_depend>
   <build_depend>boost</build_depend>
   <build_depend>openrave_catkin</build_depend>
-  <build_depend>urdf</build_depend>
-  <build_depend>srdfdom</build_depend>
   <build_depend>roslib</build_depend>
+  <build_depend>srdfdom</build_depend>
+  <build_depend>urdf</build_depend>
   <run_depend>boost</run_depend>
   <run_depend>openrave_catkin</run_depend>
-  <run_depend>urdf</run_depend>
-  <run_depend>srdfdom</run_depend>
   <run_depend>roslib</run_depend>
-  <test_depend>python</test_depend>
+  <run_depend>srdfdom</run_depend>
+  <run_depend>urdf</run_depend>
+  <test_depend>herb_description</test_depend>
   <test_depend>python-nose</test_depend>
+  <test_depend>python-numpy</test_depend>
+  <test_depend>python</test_depend>
 </package>
