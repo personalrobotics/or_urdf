@@ -10,7 +10,10 @@ import sys
 # Find the bh_280 URDF file
 from catkin.find_in_workspaces import find_in_workspaces
 share_directories = find_in_workspaces(search_dirs=['share'],
-								project='herb_description')
+								project='or_urdf',
+								path='test_data/'
+								)
+print share_directories
 if not share_directories:
     logger.error('Unable to find the BH280 model. Do you have the'
                  ' package herb_description installed?')
