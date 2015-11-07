@@ -8,8 +8,11 @@ import sys
 
 # Find the bh_280 URDF file
 from catkin.find_in_workspaces import find_in_workspaces
-share_directories = find_in_workspaces(
-    search_dirs=['share'], project='herb_description')
+
+share_directories = find_in_workspaces(search_dirs=['share'],
+								project='or_urdf',
+								path='test_data/'
+								)
 
 if not share_directories:
     raise ValueError('Unable to find BH280 model.')
