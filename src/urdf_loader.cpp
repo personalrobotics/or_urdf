@@ -727,7 +727,7 @@ bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
         OpenRAVE::KinBodyPtr body;
         std::string name;
 
-        // Load the URDF file.
+        // Parse the URDF file
         urdf::Model urdf_model;
         if (!urdf_model.initFile(input_urdf)) {
           throw OpenRAVE::openrave_exception("Failed to open URDF file.");
@@ -737,15 +737,16 @@ bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
         std::vector<OpenRAVE::KinBody::JointInfoPtr> joint_infos;
         ParseURDF(urdf_model, link_infos, joint_infos);
 
+        // Parse the SRDF file, if specified
+        srdf::Model srdf_model;
+        std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> manip_infos;
+        std::vector<OpenRAVE::RobotBase::AttachedSensorInfoPtr> sensor_infos;
         if (!input_srdf.empty()) {
-            // Load the SRDF file.
-            srdf::Model srdf_model;
             srdf_model.initFile(urdf_model, input_srdf);
-
-            std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> manip_infos;
-            std::vector<OpenRAVE::RobotBase::AttachedSensorInfoPtr> sensor_infos;
             ParseSRDF(urdf_model, srdf_model, link_infos, joint_infos, manip_infos);
+        }
 
+        if (!input_srdf.empty()) {
             // Cast all of the vector contents to const.
             std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos_const
                 = MakeConst(link_infos);
@@ -777,7 +778,7 @@ bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
 
         body->SetName(urdf_model.getName());
         GetEnv()->Add(body, true);
-        soutput << body->GetName(); 
+        soutput << body->GetName();
         return true;
     } catch (std::runtime_error const &e) {
         RAVELOG_ERROR("Failed loading URDF model: %s\n", e.what());
