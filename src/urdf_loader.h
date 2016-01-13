@@ -14,6 +14,8 @@
 #include <urdf/model.h>
 #include <srdfdom/model.h>
 
+#include <tinyxml.h>
+
 namespace or_urdf
 {
   class URDFLoader : public OpenRAVE::ModuleBase
@@ -44,6 +46,10 @@ namespace or_urdf
                    std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
                    std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos,
                    std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> &manip_infos);
+
+    void GetGeometryGroupsFromURDF(
+                   TiXmlDocument &xml_doc,
+                   std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos);
     
     /* This is called on env.LoadProblem(m, 'command') */
     int main(const std::string& cmd) { RAVELOG_INFO("URDF loader initialized with command: %s\n", cmd.c_str()); return 0; }

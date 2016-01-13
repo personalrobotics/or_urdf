@@ -712,7 +712,260 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
         }
     }
 }
-  
+
+void URDFLoader::GetGeometryGroupsFromURDF(
+                       TiXmlDocument &xml_doc,
+                       std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos)
+{
+    TiXmlHandle xml_handle(&xml_doc);
+
+    // <robot> element
+    TiXmlHandle robot_handle(0);
+    {
+        TiXmlElement* robot_element = xml_handle.FirstChild("robot").Element();
+        if (!robot_element) {
+            throw std::runtime_error("Could not find the 'robot' element in the xml file.");
+        }
+
+        robot_handle = TiXmlHandle(robot_element);
+    }
+
+    // Parse URDF first time,
+    // get the names of any link geom_group elements:
+
+    std::set<std::string> geom_groups_set;
+
+    // <link> elements
+    for (TiXmlElement* link_element = robot_handle.FirstChild("link").Element();
+         link_element;
+         link_element = link_element->NextSiblingElement("link"))
+    {
+        const char* link_name = link_element->Attribute("name");
+        if (!link_name) {
+            throw std::runtime_error("Link is missing 'name' attribute.");
+        }
+
+        TiXmlHandle link_handle = TiXmlHandle(link_element);
+
+        // <geom_group> element
+        const char* geom_group_name;
+        for (TiXmlElement* geom_group_element = link_handle.FirstChild("geom_group").Element();
+             geom_group_element;
+             geom_group_element = geom_group_element->NextSiblingElement("geom_group"))
+        {
+            geom_group_name = geom_group_element->Attribute("name");
+            if (!geom_group_name) {
+                throw std::runtime_error(boost::str(
+                    boost::format("Unable to get geom_group name for link '%s':")
+                    % link_name));
+            }
+
+            TiXmlHandle geom_group_handle = TiXmlHandle(geom_group_element);
+
+            // <geometry> element
+            for (TiXmlElement* geometry_element = geom_group_handle.FirstChild("geometry").Element();
+                 geometry_element;
+                 geometry_element = geometry_element->NextSiblingElement("geometry"))
+            {
+                TiXmlHandle geometry_handle = TiXmlHandle(geometry_element);
+
+                // <mesh> element
+                for (TiXmlElement* mesh_element = geometry_handle.FirstChild("mesh").Element();
+                     mesh_element;
+                     mesh_element = mesh_element->NextSiblingElement("mesh"))
+                {
+                    // Found a <mesh> element for a geom_group,
+                    // so add this group to our list
+                    geom_groups_set.insert(geom_group_name);
+
+                    break; // only find first <mesh> element
+                }
+
+                break; // only find first <geometry> element
+            }
+        } // end <collision> element
+    } // end <link> element
+
+    // Convert un-ordered set to a vector
+    std::vector<std::string> geom_groups(geom_groups_set.begin(), geom_groups_set.end());
+
+    //if (geom_groups.size() > 0) {
+    //    std::cout << "Found geom groups: " << std::endl;
+    //    BOOST_FOREACH(std::string& geom_group, geom_groups) {
+    //        std::cout << geom_group << std::endl;
+    //    }
+    //}
+
+    // Stop if there are no geometry groups in the URDF
+    if (geom_groups.size() == 0) {
+        return;
+    }
+
+    // Parse URDF second time,
+    // add the geometry groups to the OpenRAVE link_infos
+
+    // <link> elements
+    for (TiXmlElement* link_element = robot_handle.FirstChild("link").Element();
+         link_element;
+         link_element = link_element->NextSiblingElement("link"))
+    {
+        const char* link_name = link_element->Attribute("name");
+        if (!link_name) {
+            throw std::runtime_error("Link is missing 'name' attribute.");
+        }
+
+        TiXmlHandle link_handle = TiXmlHandle(link_element);
+
+        // Find the corresponding OpenRAVE link,
+        // if this link does not have a mesh for each geom_group
+        // then we must still add the geom_group (with no geometry).
+        OpenRAVE::KinBody::LinkInfoPtr link_info;
+        BOOST_FOREACH (OpenRAVE::KinBody::LinkInfoPtr candidate,
+                       link_infos) {
+            if (candidate->_name == link_name) {
+                link_info = candidate;
+                break;
+            }
+        }
+        if (!link_info) {
+            throw std::runtime_error(boost::str(
+                boost::format("Unable to find a corresponding link '%s'")
+                % link_name));
+        }
+
+        std::vector<std::string> geom_groups_added;
+
+        // <geom_group> element
+        const char* geom_group_name;
+        for (TiXmlElement* geom_group_element = link_handle.FirstChild("geom_group").Element();
+             geom_group_element;
+             geom_group_element = geom_group_element->NextSiblingElement("geom_group"))
+        {
+            geom_group_name = geom_group_element->Attribute("name");
+            if (!geom_group_name) {
+                throw std::runtime_error(boost::str(
+                    boost::format("Unable to get geom_group name for link '%s':")
+                    % link_name));
+            }
+
+            TiXmlHandle geom_group_handle = TiXmlHandle(geom_group_element);
+
+            // <origin> element
+            urdf::Pose origin_pose;
+            for (TiXmlElement* origin_element = geom_group_handle.FirstChild("origin").Element();
+                 origin_element;
+                 origin_element = origin_element->NextSiblingElement("origin"))
+            {
+                std::string rpy_str = std::string("0 0 0");
+                const char* rpy = origin_element->Attribute("rpy");
+                if (rpy) {
+                    rpy_str = std::string(rpy);
+                }
+
+                std::string xyz_str = std::string("0 0 0");
+                const char* xyz = origin_element->Attribute("xyz");
+                if (xyz) {
+                    xyz_str = std::string(xyz);
+                }
+
+                origin_pose.rotation.init(rpy_str);
+                origin_pose.position.init(xyz_str);
+
+                break; // only find first <origin> element
+            }
+
+            // <geometry> element
+            for (TiXmlElement* geometry_element = geom_group_handle.FirstChild("geometry").Element();
+                 geometry_element;
+                 geometry_element = geometry_element->NextSiblingElement("geometry"))
+            {
+                TiXmlHandle geometry_handle = TiXmlHandle(geometry_element);
+
+                // <mesh> element
+                for (TiXmlElement* mesh_element = geometry_handle.FirstChild("mesh").Element();
+                     mesh_element;
+                     mesh_element = mesh_element->NextSiblingElement("mesh"))
+                {
+                    const char* mesh_filename = mesh_element->Attribute("filename");
+                    if (!mesh_filename) {
+                        throw std::runtime_error(boost::str(
+                            boost::format("Unable to get 'filename' attribute for"
+                                          " mesh element for link '%s':")
+                                          % link_name));
+                    }
+
+                    // Add this mesh to a separate collision geometry group
+                    std::vector<OpenRAVE::KinBody::GeometryInfoPtr> &geom_infos
+                            = link_info->_mapExtraGeometries[geom_group_name];
+
+                    OpenRAVE::KinBody::GeometryInfoPtr geom_info
+                        = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>();
+                    geom_info->_t = URDFPoseToRaveTransform(origin_pose);
+                    geom_info->_bModifiable = false;
+
+                    // Set collision geometry to be visible, so it can be
+                    // seen in the 'visual' group in or_rviz
+                    geom_info->_bVisible = true;
+
+                    geom_info->_type = OpenRAVE::GT_TriMesh;
+                    geom_info->_filenamecollision = resolveURI(mesh_filename);
+
+                    // The mesh <scale> tag is not parsed, also apparently it
+                    // doesn't seem to do anything
+                    //geom_info->_vCollisionScale = URDFVectorToRaveVector(mesh_scale);
+
+                    boost::shared_ptr<OpenRAVE::TriMesh> trimesh =
+                                              boost::make_shared<OpenRAVE::TriMesh>();
+                    trimesh = GetEnv()->ReadTrimeshURI(trimesh,
+                                                       geom_info->_filenamecollision);
+                    if (trimesh) {
+                        // The _vCollisionScale property does nothing, so we have to
+                        // manually scale the mesh.
+                        BOOST_FOREACH(OpenRAVE::Vector &vertex, trimesh->vertices) {
+                            vertex *= geom_info->_vCollisionScale;
+                        }
+                        geom_info->_meshcollision = *trimesh;
+                    }
+                    else {
+                        RAVELOG_WARN("Link %s: Failed loading collision mesh %s \n",
+                                     link_name, geom_info->_filenamecollision.c_str());
+                    }
+
+                    geom_infos.push_back(geom_info);
+
+                    geom_groups_added.push_back(geom_group_name);
+
+                    break; // only find first <mesh> element
+                }
+
+                break; // only find first <geometry> element
+            }
+        } // end <collision> element
+
+        // Get the geom_group names that were not explicitly defined
+        // for this link
+        std::set<std::string> geom_groups_set(geom_groups.begin(),
+                                              geom_groups.end() );
+        std::set<std::string> geom_groups_added_set(geom_groups_added.begin(),
+                                                    geom_groups_added.end() );
+        std::vector<std::string> unspecified_geom_groups;
+        std::set_difference(geom_groups_set.begin(),
+                            geom_groups_set.end(),
+                            geom_groups_added_set.begin(),
+                            geom_groups_added_set.end(),
+                            std::back_inserter(unspecified_geom_groups) );
+
+        // Add unspecified geometry groups to this link.
+        // They will have no geometry, but otherwise exception is thrown
+        // in OpenRAVE::KinBody::SetLinkGeometriesFromGroup
+        if (unspecified_geom_groups.size() > 0) {
+            BOOST_FOREACH(std::string& geom_group_name, unspecified_geom_groups) {
+                link_info->_mapExtraGeometries[geom_group_name];
+            }
+        }
+    } // end <link> element
+}
+
 /** Opens a URDF file and returns a robot in OpenRAVE */
 bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
 {
@@ -745,6 +998,13 @@ bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
             srdf_model.initFile(urdf_model, input_srdf);
             ParseSRDF(urdf_model, srdf_model, link_infos, joint_infos, manip_infos);
         }
+
+        // Parse the URDF again to find <geom_group> elements
+        TiXmlDocument xml_doc(input_urdf.c_str());
+        if (!xml_doc.LoadFile()) {
+            throw std::runtime_error("Could not load the URDF file.");
+        }
+        GetGeometryGroupsFromURDF(xml_doc, link_infos);
 
         if (!input_srdf.empty()) {
             // Cast all of the vector contents to const.
