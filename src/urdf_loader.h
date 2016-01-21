@@ -47,7 +47,7 @@ namespace or_urdf
                    std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos,
                    std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> &manip_infos);
 
-    void GetGeometryGroupsFromURDF(
+    void ProcessGeometryGroupTagsFromURDF(
                    TiXmlDocument &xml_doc,
                    std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos);
     
