@@ -730,79 +730,12 @@ void URDFLoader::ProcessGeometryGroupTagsFromURDF(
         robot_handle = TiXmlHandle(robot_element);
     }
 
-    // Parse URDF first time,
-    // get the names of any link <geometry_group> elements:
-
+    // Store a set of unique <geometry_group> names found in the URDF
     std::set<std::string> geometry_group_names_set;
 
-    // <link> elements
-    for (TiXmlElement* link_element = robot_handle.FirstChild("link").Element();
-         link_element;
-         link_element = link_element->NextSiblingElement("link"))
-    {
-        const char* link_name = link_element->Attribute("name");
-        if (!link_name) {
-            throw std::runtime_error("Link is missing 'name' attribute.");
-        }
-
-        TiXmlHandle link_handle = TiXmlHandle(link_element);
-
-        // <geometry_group> element
-        const char* geometry_group_name;
-        for (TiXmlElement* geometry_group_element = link_handle.FirstChild("geometry_group").Element();
-             geometry_group_element;
-             geometry_group_element = geometry_group_element->NextSiblingElement("geometry_group"))
-        {
-            geometry_group_name = geometry_group_element->Attribute("name");
-            if (!geometry_group_name) {
-                throw std::runtime_error(boost::str(
-                    boost::format("Unable to get geometry_group name for link '%s':")
-                    % link_name));
-            }
-
-            TiXmlHandle geometry_group_handle = TiXmlHandle(geometry_group_element);
-
-            // <geometry> element
-            for (TiXmlElement* geometry_element = geometry_group_handle.FirstChild("geometry").Element();
-                 geometry_element;
-                 geometry_element = geometry_element->NextSiblingElement("geometry"))
-            {
-                TiXmlHandle geometry_handle = TiXmlHandle(geometry_element);
-
-                // <mesh> element
-                for (TiXmlElement* mesh_element = geometry_handle.FirstChild("mesh").Element();
-                     mesh_element;
-                     mesh_element = mesh_element->NextSiblingElement("mesh"))
-                {
-                    // Found a <mesh> element for a <geometry_group>,
-                    // so add this group to our list
-                    geometry_group_names_set.insert(geometry_group_name);
-
-                    break; // only find first <mesh> element
-                }
-
-                break; // only find first <geometry> element
-            }
-        } // end <collision> element
-    } // end <link> element
-
-    // Convert un-ordered set to a vector
-    std::vector<std::string> geometry_group_names_vec(geometry_group_names_set.begin(), geometry_group_names_set.end());
-
-    //if (geometry_group_names_vec.size() > 0) {
-    //    std::cout << "Found geometry group tags: " << std::endl;
-    //    BOOST_FOREACH(std::string& geometry_group, geometry_group_names_vec) {
-    //        std::cout << geometry_group << std::endl;
-    //    }
-    //}
-
-    // Stop if there are no geometry group tags in the URDF
-    if (geometry_group_names_vec.size() == 0) {
-        return;
-    }
-
-    // Parse URDF second time,
-    // add each geometry group to the OpenRAVE link_infos
+    // Parse the URDF,
+    // if a specific link has a <geometry_group> tag
+    // then add that group to the OpenRAVE link_infos:
 
     // <link> elements
     for (TiXmlElement* link_element = robot_handle.FirstChild("link").Element();
@@ -816,9 +749,7 @@ void URDFLoader::ProcessGeometryGroupTagsFromURDF(
 
         TiXmlHandle link_handle = TiXmlHandle(link_element);
 
-        // Find the corresponding OpenRAVE link,
-        // if this link does not have a mesh for each <geometry_group>
-        // then we must still add the geometry group (with no geometry).
+        // Find the corresponding OpenRAVE link
         OpenRAVE::KinBody::LinkInfoPtr link_info;
         BOOST_FOREACH (OpenRAVE::KinBody::LinkInfoPtr candidate,
                        link_infos) {
@@ -833,8 +764,6 @@ void URDFLoader::ProcessGeometryGroupTagsFromURDF(
                 % link_name));
         }
 
-        std::vector<std::string> geometry_group_names_vec_added;
-
         // <geometry_group> element
         const char* geometry_group_name;
         for (TiXmlElement* geometry_group_element = link_handle.FirstChild("geometry_group").Element();
@@ -847,6 +776,9 @@ void URDFLoader::ProcessGeometryGroupTagsFromURDF(
                     boost::format("Unable to get geometry_group name for link '%s':")
                     % link_name));
             }
+
+            // Add this geometry group to our set of groups
+            geometry_group_names_set.insert(geometry_group_name);
 
             TiXmlHandle geometry_group_handle = TiXmlHandle(geometry_group_element);
 
@@ -933,37 +865,24 @@ void URDFLoader::ProcessGeometryGroupTagsFromURDF(
 
                     geom_infos.push_back(geom_info);
 
-                    geometry_group_names_vec_added.push_back(geometry_group_name);
-
                     break; // only find first <mesh> element
                 }
 
                 break; // only find first <geometry> element
             }
         } // end <collision> element
-
-        // Get the <geometry_group> names that were not explicitly defined
-        // for this link
-        std::set<std::string> geometry_group_names_set(geometry_group_names_vec.begin(),
-                                              geometry_group_names_vec.end() );
-        std::set<std::string> geometry_group_names_vec_added_set(geometry_group_names_vec_added.begin(),
-                                                    geometry_group_names_vec_added.end() );
-        std::vector<std::string> unspecified_geometry_group_names_vec;
-        std::set_difference(geometry_group_names_set.begin(),
-                            geometry_group_names_set.end(),
-                            geometry_group_names_vec_added_set.begin(),
-                            geometry_group_names_vec_added_set.end(),
-                            std::back_inserter(unspecified_geometry_group_names_vec) );
-
-        // Add unspecified geometry groups to this link.
-        // They will have no geometry, but otherwise exception is thrown
-        // in OpenRAVE::KinBody::SetLinkGeometriesFromGroup
-        if (unspecified_geometry_group_names_vec.size() > 0) {
-            BOOST_FOREACH(std::string& geometry_group_name, unspecified_geometry_group_names_vec) {
-                link_info->_mapExtraGeometries[geometry_group_name];
-            }
-        }
     } // end <link> element
+
+    // Each OpenRAVE link must be a member of each geometry group,
+    // so iterate over all the links and add them to each of the
+    // geometry groups.
+    // If a specific geometry group (and mesh) was already specified for
+    // a link, calling calling mapExtraGeometries[] again does nothing.
+    BOOST_FOREACH(OpenRAVE::KinBody::LinkInfoPtr link_info, link_infos) {
+        BOOST_FOREACH(std::string geometry_group_name, geometry_group_names_set) {
+            link_info->_mapExtraGeometries[geometry_group_name];
+        }
+    }
 }
 
 /** Opens a URDF file and returns a robot in OpenRAVE */
