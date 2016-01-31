@@ -257,11 +257,11 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
     }
 }
 
-  void URDFLoader::ParseURDF(
-        urdf::Model &model,
-        std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
-        std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos)
-  {
+void URDFLoader::ParseURDF(
+                     urdf::Model &model,
+                     std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
+                     std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos)
+{
     // Populate list of links from URDF model. We'll force the root link to be
     // first.
     std::vector<boost::shared_ptr<urdf::Link> > link_vector;
@@ -283,157 +283,159 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
     boost::shared_ptr<urdf::Link const> link_ptr;
 
     while (!link_list.empty()) {
-      // Get next element in list
-      link_ptr = link_list.front();
-      link_list.pop_front();
+        // Get next element in list
+        link_ptr = link_list.front();
+        link_list.pop_front();
 
-      OpenRAVE::KinBody::LinkInfoPtr link_info
-            = boost::make_shared<OpenRAVE::KinBody::LinkInfo>();
+        OpenRAVE::KinBody::LinkInfoPtr link_info
+                = boost::make_shared<OpenRAVE::KinBody::LinkInfo>();
 
-      // TODO: Set "type" to "dynamic".
-      link_info->_name = link_ptr->name;
-      
-      // Set inertial parameters
-      boost::shared_ptr<urdf::Inertial> inertial = link_ptr->inertial;
-      if (inertial) {
-        // XXX: We should also specify the off-diagonal terms (ixy, iyz, ixz)
-        // of the inertia tensor. We can do this in KinBody XML files, but I
-        // cannot figure out how to do so through this API.
-        link_info->_mass = inertial->mass;
-        link_info->_tMassFrame = URDFPoseToRaveTransform(inertial->origin);
-        link_info->_vinertiamoments = OpenRAVE::Vector(
-                inertial->ixx, inertial->iyy, inertial->izz);
-      }
+        // TODO: Set "type" to "dynamic".
+        link_info->_name = link_ptr->name;
 
-      // Set local transformation to be same as parent joint
-      boost::shared_ptr<urdf::Joint> parent_joint = link_ptr->parent_joint;
-      while (parent_joint) {
-        link_info->_t = URDFPoseToRaveTransform(
-                parent_joint->parent_to_joint_origin_transform) * link_info->_t;
-        boost::shared_ptr<urdf::Link const> parent_link
-                = model.getLink(parent_joint->parent_link_name);
-        parent_joint = parent_link->parent_joint;
-      }
-      
-      // Set information for collision geometry
-      BOOST_FOREACH (boost::shared_ptr<urdf::Collision> collision, link_ptr->collision_array) {
-        OpenRAVE::KinBody::GeometryInfoPtr geom_info
-                = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>();
+        // Set inertial parameters
+        boost::shared_ptr<urdf::Inertial> inertial = link_ptr->inertial;
+        if (inertial) {
+            // XXX: We should also specify the off-diagonal terms (ixy, iyz, ixz)
+            // of the inertia tensor. We can do this in KinBody XML files, but I
+            // cannot figure out how to do so through this API.
+            link_info->_mass = inertial->mass;
+            link_info->_tMassFrame = URDFPoseToRaveTransform(inertial->origin);
+            link_info->_vinertiamoments = OpenRAVE::Vector(
+                    inertial->ixx, inertial->iyy, inertial->izz);
+        }
 
-        // TODO: Shouldn't we apply this transform?
-        geom_info->_t = URDFPoseToRaveTransform(collision->origin);
-        geom_info->_bVisible = false;
-        geom_info->_bModifiable = false;
+        // Set local transformation to be same as parent joint
+        boost::shared_ptr<urdf::Joint> parent_joint = link_ptr->parent_joint;
+        while (parent_joint) {
+            link_info->_t = URDFPoseToRaveTransform(
+                    parent_joint->parent_to_joint_origin_transform) * link_info->_t;
+            boost::shared_ptr<urdf::Link const> parent_link
+                    = model.getLink(parent_joint->parent_link_name);
+            parent_joint = parent_link->parent_joint;
+        }
 
-        switch (collision->geometry->type) {
-        case urdf::Geometry::MESH: {
-            urdf::Mesh const &mesh
-                    = dynamic_cast<const urdf::Mesh &>(*collision->geometry);
-            geom_info->_filenamecollision = resolveURI(mesh.filename);
-            geom_info->_type = OpenRAVE::GT_TriMesh;
+        // Set information for collision geometry
+        BOOST_FOREACH (boost::shared_ptr<urdf::Collision> collision,
+                       link_ptr->collision_array) {
+            OpenRAVE::KinBody::GeometryInfoPtr geom_info
+                    = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>();
 
-            // This doesn't seem to do anything, but we'll set it anyway.
-            geom_info->_vCollisionScale = URDFVectorToRaveVector(mesh.scale);
+            // TODO: Shouldn't we apply this transform?
+            geom_info->_t = URDFPoseToRaveTransform(collision->origin);
+            geom_info->_bVisible = false;
+            geom_info->_bModifiable = false;
 
-            boost::shared_ptr<OpenRAVE::TriMesh> trimesh
-                    = boost::make_shared<OpenRAVE::TriMesh>();
-            trimesh = GetEnv()->ReadTrimeshURI(trimesh,
-                                               geom_info->_filenamecollision);
-            if (trimesh) {
-                // The _vCollisionScale property does nothing, so we have to
-                // manually scale the mesh.
-                BOOST_FOREACH(OpenRAVE::Vector &vertex, trimesh->vertices) {
-                    vertex *= geom_info->_vCollisionScale;
+            switch (collision->geometry->type) {
+                case urdf::Geometry::MESH: {
+                    urdf::Mesh const &mesh
+                            = dynamic_cast<const urdf::Mesh &>(*collision->geometry);
+                    geom_info->_filenamecollision = resolveURI(mesh.filename);
+                    geom_info->_type = OpenRAVE::GT_TriMesh;
+
+                    // This doesn't seem to do anything, but we'll set it anyway.
+                    geom_info->_vCollisionScale = URDFVectorToRaveVector(mesh.scale);
+
+                    boost::shared_ptr<OpenRAVE::TriMesh> trimesh
+                            = boost::make_shared<OpenRAVE::TriMesh>();
+                    trimesh = GetEnv()->ReadTrimeshURI(trimesh,
+                                                       geom_info->_filenamecollision);
+                    if (trimesh) {
+                        // The _vCollisionScale property does nothing, so we have to
+                        // manually scale the mesh.
+                        BOOST_FOREACH(OpenRAVE::Vector &vertex, trimesh->vertices) {
+                            vertex *= geom_info->_vCollisionScale;
+                        }
+
+                        geom_info->_meshcollision = *trimesh;
+                    } else {
+                        RAVELOG_WARN("Link[%s]: Failed loading collision mesh %s\n",
+                                     link_ptr->name.c_str(), geom_info->_filenamecollision.c_str());
+                    }
+                    break;
                 }
 
-                geom_info->_meshcollision = *trimesh;
-            } else {
-                RAVELOG_WARN("Link[%s]: Failed loading collision mesh %s\n",
-                             link_ptr->name.c_str(), geom_info->_filenamecollision.c_str());
-            }
-            break;
-        }
+                case urdf::Geometry::SPHERE: {
+                    RAVELOG_WARN("Creating sphere!\n");
+                    urdf::Sphere const &sphere
+                            = dynamic_cast<const urdf::Sphere &>(*collision->geometry);
+                    geom_info->_vGeomData = sphere.radius * OpenRAVE::Vector(1, 1, 1);
+                    geom_info->_type = OpenRAVE::GT_Sphere;
+                    break;
+                }
 
-        case urdf::Geometry::SPHERE: {
-            RAVELOG_WARN("Creating sphere!\n");
-            urdf::Sphere const &sphere
-                    = dynamic_cast<const urdf::Sphere &>(*collision->geometry);
-            geom_info->_vGeomData = sphere.radius * OpenRAVE::Vector(1, 1, 1);
-            geom_info->_type = OpenRAVE::GT_Sphere;
-            break;
-        }
+                case urdf::Geometry::BOX: {
+                    urdf::Box const &box
+                            = dynamic_cast<const urdf::Box &>(*collision->geometry);
+                    geom_info->_vGeomData = 0.5 * OpenRAVE::Vector(box.dim.x, box.dim.y,
+                                                                   box.dim.z);
+                    geom_info->_type = OpenRAVE::GT_Box;
+                    break;
+                }
 
-        case urdf::Geometry::BOX: {
-            urdf::Box const &box
-                    = dynamic_cast<const urdf::Box &>(*collision->geometry);
-            geom_info->_vGeomData = 0.5 * OpenRAVE::Vector(box.dim.x, box.dim.y,
-                                                           box.dim.z);
-            geom_info->_type = OpenRAVE::GT_Box;
-            break;
-        }
-
-        case urdf::Geometry::CYLINDER: {
-            urdf::Cylinder const &cylinder
-                    = dynamic_cast<const urdf::Cylinder &>(*collision->geometry);
-            geom_info->_vGeomData = OpenRAVE::Vector(cylinder.radius,
-                                                     cylinder.length, 0);
-            geom_info->_type = OpenRAVE::GT_Cylinder;
-            break;
-        }
-        }
-
-        link_info->_vgeometryinfos.push_back(geom_info);
-      }
-
-      // Add the render geometry. We can't create a link with no collision
-      // geometry, so we'll instead create a zero-radius sphere with the
-      // desired render mesh.
-      // TODO: Why does GT_None crash OpenRAVE?
-      boost::shared_ptr<urdf::Visual> visual = link_ptr->visual;
-      if (visual) {
-        OpenRAVE::KinBody::GeometryInfoPtr geom_info
-            = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>();
-        geom_info->_t = URDFPoseToRaveTransform(visual->origin);
-        geom_info->_type = OpenRAVE::GT_Sphere;
-        geom_info->_vGeomData = OpenRAVE::Vector(0.0, 0.0, 0.0);
-        geom_info->_bModifiable = false;
-        geom_info->_bVisible = true;
-
-        switch (visual->geometry->type) {
-        case urdf::Geometry::MESH: {
-            const urdf::Mesh &mesh = dynamic_cast<const urdf::Mesh&>(*visual->geometry);
-            geom_info->_filenamerender = resolveURI(mesh.filename);
-            geom_info->_vRenderScale = URDFVectorToRaveVector(mesh.scale);
-
-            // If a material color is specified, use it.
-            boost::shared_ptr<urdf::Material> material = visual->material;
-            if (material) {
-                geom_info->_vDiffuseColor = URDFColorToRaveVector(material->color);
-                geom_info->_vAmbientColor = URDFColorToRaveVector(material->color);
+                case urdf::Geometry::CYLINDER: {
+                    urdf::Cylinder const &cylinder
+                            = dynamic_cast<const urdf::Cylinder &>(*collision->geometry);
+                    geom_info->_vGeomData = OpenRAVE::Vector(cylinder.radius,
+                                                             cylinder.length, 0);
+                    geom_info->_type = OpenRAVE::GT_Cylinder;
+                    break;
+                }
             }
 
-            // Add the render-only geometry to the standard geometry group for
-            // backwards compatability with QtCoin.
             link_info->_vgeometryinfos.push_back(geom_info);
-
-            // Create a group dedicated to visual geometry for or_rviz.
-            OpenRAVE::KinBody::GeometryInfoPtr geom_info_clone
-                = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>(*geom_info);
-            link_info->_mapExtraGeometries["visual"].push_back(geom_info_clone);
-            break;
         }
 
-        default:
-            RAVELOG_WARN("Link[%s]: Only trimeshes are supported for visual geometry.\n", link_ptr->name.c_str());
-        }
-      }
+        // Add the render geometry. We can't create a link with no collision
+        // geometry, so we'll instead create a zero-radius sphere with the
+        // desired render mesh.
+        // TODO: Why does GT_None crash OpenRAVE?
+        boost::shared_ptr<urdf::Visual> visual = link_ptr->visual;
+        if (visual) {
+            OpenRAVE::KinBody::GeometryInfoPtr geom_info
+                = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>();
+            geom_info->_t = URDFPoseToRaveTransform(visual->origin);
+            geom_info->_type = OpenRAVE::GT_Sphere;
+            geom_info->_vGeomData = OpenRAVE::Vector(0.0, 0.0, 0.0);
+            geom_info->_bModifiable = false;
+            geom_info->_bVisible = true;
 
-      // Verify that the "visual" and "spheres" groups always exist. Recall 
-      // that accessing an element with operator[] creates it using the default
-      // no-arg constructor if it does not already exist.
-      link_info->_mapExtraGeometries["visual"];
-      link_info->_mapExtraGeometries["spheres"];
-      link_infos.push_back(link_info);
+            switch (visual->geometry->type) {
+            case urdf::Geometry::MESH: {
+                const urdf::Mesh &mesh = dynamic_cast<const urdf::Mesh&>(*visual->geometry);
+                geom_info->_filenamerender = resolveURI(mesh.filename);
+                geom_info->_vRenderScale = URDFVectorToRaveVector(mesh.scale);
+
+                // If a material color is specified, use it.
+                boost::shared_ptr<urdf::Material> material = visual->material;
+                if (material) {
+                    geom_info->_vDiffuseColor = URDFColorToRaveVector(material->color);
+                    geom_info->_vAmbientColor = URDFColorToRaveVector(material->color);
+                }
+
+                // Add the render-only geometry to the standard geometry group for
+                // backwards compatability with QtCoin.
+                link_info->_vgeometryinfos.push_back(geom_info);
+
+                // Create a group dedicated to visual geometry for or_rviz.
+                OpenRAVE::KinBody::GeometryInfoPtr geom_info_clone
+                    = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>(*geom_info);
+                link_info->_mapExtraGeometries["visual"].push_back(geom_info_clone);
+                break;
+            }
+
+            default:
+                RAVELOG_WARN("Link[%s]: Only trimeshes are supported for visual geometry.\n", link_ptr->name.c_str());
+            }
+        }
+
+        // Verify that the "visual" and "spheres" groups always exist. Recall 
+        // that accessing an element with operator[] creates it using the default
+        // no-arg constructor if it does not already exist.
+        link_info->_mapExtraGeometries["visual"];
+        link_info->_mapExtraGeometries["spheres"];
+
+        link_infos.push_back(link_info);
     }
 
     // Populate vector of joints
@@ -447,76 +449,76 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
     }
 
     BOOST_FOREACH(boost::shared_ptr<urdf::Joint> joint_ptr, ordered_joints) {
-      OpenRAVE::KinBody::JointInfoPtr joint_info = boost::make_shared<OpenRAVE::KinBody::JointInfo>();
-      joint_info->_name = joint_ptr->name;
-      joint_info->_linkname0 = joint_ptr->parent_link_name;
-      joint_info->_linkname1 = joint_ptr->child_link_name;
-      joint_info->_vanchor = URDFVectorToRaveVector(joint_ptr->parent_to_joint_origin_transform.position);
+        OpenRAVE::KinBody::JointInfoPtr joint_info = boost::make_shared<OpenRAVE::KinBody::JointInfo>();
+        joint_info->_name = joint_ptr->name;
+        joint_info->_linkname0 = joint_ptr->parent_link_name;
+        joint_info->_linkname1 = joint_ptr->child_link_name;
+        joint_info->_vanchor = URDFVectorToRaveVector(joint_ptr->parent_to_joint_origin_transform.position);
 
-      int const urdf_joint_type = joint_ptr->type;
+        int const urdf_joint_type = joint_ptr->type;
 
-      // Set the joint type. Some URDF joints correspond to disabled OpenRAVE
-      // joints, so we'll appropriately set the corresponding IsActive flag.
-      OpenRAVE::KinBody::JointType joint_type;
-      bool enabled;
-      boost::tie(joint_type, enabled) = URDFJointTypeToRaveJointType(urdf_joint_type);
-      joint_info->_type = joint_type;
-      joint_info->_bIsActive = enabled;
-      joint_info->_bIsCircular[0] = (urdf_joint_type == urdf::Joint::CONTINUOUS);
+        // Set the joint type. Some URDF joints correspond to disabled OpenRAVE
+        // joints, so we'll appropriately set the corresponding IsActive flag.
+        OpenRAVE::KinBody::JointType joint_type;
+        bool enabled;
+        boost::tie(joint_type, enabled) = URDFJointTypeToRaveJointType(urdf_joint_type);
+        joint_info->_type = joint_type;
+        joint_info->_bIsActive = enabled;
+        joint_info->_bIsCircular[0] = (urdf_joint_type == urdf::Joint::CONTINUOUS);
 
-      // URDF only supports linear mimic joints with a constant offset. We map
-      // that into the correct position (index 0) and velocity (index 1)
-      // equations for OpenRAVE.
-      boost::shared_ptr<urdf::JointMimic> mimic = joint_ptr->mimic;
-      if (mimic) {
-        joint_info->_vmimic[0] = boost::make_shared<OpenRAVE::KinBody::MimicInfo>();
-        joint_info->_vmimic[0]->_equations[0] = boost::str(boost::format("%s*%0.6f+%0.6f")
-                % mimic->joint_name % mimic->multiplier % mimic->offset);
-        joint_info->_vmimic[0]->_equations[1] = boost::str(boost::format("|%s %0.6f")
-                % mimic->joint_name % mimic->multiplier);
-      }
+        // URDF only supports linear mimic joints with a constant offset. We map
+        // that into the correct position (index 0) and velocity (index 1)
+        // equations for OpenRAVE.
+        boost::shared_ptr<urdf::JointMimic> mimic = joint_ptr->mimic;
+        if (mimic) {
+            joint_info->_vmimic[0] = boost::make_shared<OpenRAVE::KinBody::MimicInfo>();
+            joint_info->_vmimic[0]->_equations[0] = boost::str(boost::format("%s*%0.6f+%0.6f")
+                    % mimic->joint_name % mimic->multiplier % mimic->offset);
+            joint_info->_vmimic[0]->_equations[1] = boost::str(boost::format("|%s %0.6f")
+                    % mimic->joint_name % mimic->multiplier);
+        }
 
-      // Configure joint axis. Add an arbitrary axis if the joint is disabled.
-      urdf::Vector3 joint_axis;
-      if (enabled) {
-        joint_axis = joint_ptr->parent_to_joint_origin_transform.rotation * joint_ptr->axis;
-      } else {
-        joint_axis = urdf::Vector3(1, 0, 0);
-      }
-      joint_info->_vaxes[0] = URDFVectorToRaveVector(joint_axis);
-      
-      // Configure joint limits.
-      boost::shared_ptr<urdf::JointLimits> limits = joint_ptr->limits;
-      if (limits) {
-          // TODO: What about acceleration?
-          joint_info->_vlowerlimit[0] = limits->lower;
-          joint_info->_vupperlimit[0] = limits->upper;
-          joint_info->_vmaxvel[0] = limits->velocity;
-          joint_info->_vmaxtorque[0] = limits->effort;
-      }
-      // Fixed joints are just revolute joints with zero limits.
-      else if (!enabled) {
-          joint_info->_vlowerlimit[0] = 0;
-          joint_info->_vupperlimit[0] = 0;
-      }
-      // Default to +/- 2*PI. This is the same default used by OpenRAVE for
-      // revolute joints.
-      else {
-          joint_info->_vlowerlimit[0] = -M_PI;
-          joint_info->_vupperlimit[0] =  M_PI;
-      }
+        // Configure joint axis. Add an arbitrary axis if the joint is disabled.
+        urdf::Vector3 joint_axis;
+        if (enabled) {
+            joint_axis = joint_ptr->parent_to_joint_origin_transform.rotation * joint_ptr->axis;
+        } else {
+            joint_axis = urdf::Vector3(1, 0, 0);
+        }
+        joint_info->_vaxes[0] = URDFVectorToRaveVector(joint_axis);
 
-      // Force continuous joints to have +/- PI limits. Otherwise, the internal
-      // _vcircularlowerlimit and _vcircularupperlimit values will be set to
-      // zero. This causes OpenRAVE::utils::NormalizeCircularAngle to crash.
-      if (urdf_joint_type == urdf::Joint::CONTINUOUS) {
-          joint_info->_vlowerlimit[0] = -M_PI;
-          joint_info->_vupperlimit[0] =  M_PI;
-      }
+        // Configure joint limits.
+        boost::shared_ptr<urdf::JointLimits> limits = joint_ptr->limits;
+        if (limits) {
+            // TODO: What about acceleration?
+            joint_info->_vlowerlimit[0] = limits->lower;
+            joint_info->_vupperlimit[0] = limits->upper;
+            joint_info->_vmaxvel[0] = limits->velocity;
+            joint_info->_vmaxtorque[0] = limits->effort;
+        }
+        // Fixed joints are just revolute joints with zero limits.
+        else if (!enabled) {
+            joint_info->_vlowerlimit[0] = 0;
+            joint_info->_vupperlimit[0] = 0;
+        }
+        // Default to +/- 2*PI. This is the same default used by OpenRAVE for
+        // revolute joints.
+        else {
+            joint_info->_vlowerlimit[0] = -M_PI;
+            joint_info->_vupperlimit[0] =  M_PI;
+        }
 
-      joint_infos.push_back(joint_info);
+        // Force continuous joints to have +/- PI limits. Otherwise, the internal
+        // _vcircularlowerlimit and _vcircularupperlimit values will be set to
+        // zero. This causes OpenRAVE::utils::NormalizeCircularAngle to crash.
+        if (urdf_joint_type == urdf::Joint::CONTINUOUS) {
+            joint_info->_vlowerlimit[0] = -M_PI;
+            joint_info->_vupperlimit[0] =  M_PI;
+        }
+
+        joint_infos.push_back(joint_info);
     }
-  }
+}
 
 void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
                            std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
@@ -710,12 +712,184 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
         }
     }
 }
-  
+
+void URDFLoader::ProcessGeometryGroupTagsFromURDF(
+                       TiXmlDocument &xml_doc,
+                       std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos)
+{
+    TiXmlHandle xml_handle(&xml_doc);
+
+    // <robot> element
+    TiXmlHandle robot_handle(0);
+    {
+        TiXmlElement* robot_element = xml_handle.FirstChild("robot").Element();
+        if (!robot_element) {
+            throw std::runtime_error("Could not find the 'robot' element in the xml file.");
+        }
+
+        robot_handle = TiXmlHandle(robot_element);
+    }
+
+    // Store a set of unique <geometry_group> names found in the URDF
+    std::set<std::string> geometry_group_names_set;
+
+    // Parse the URDF,
+    // if a specific link has a <geometry_group> tag
+    // then add that group to the OpenRAVE link_infos:
+
+    // <link> elements
+    for (TiXmlElement* link_element = robot_handle.FirstChild("link").Element();
+         link_element;
+         link_element = link_element->NextSiblingElement("link"))
+    {
+        const char* link_name = link_element->Attribute("name");
+        if (!link_name) {
+            throw std::runtime_error("Link is missing 'name' attribute.");
+        }
+
+        TiXmlHandle link_handle = TiXmlHandle(link_element);
+
+        // Find the corresponding OpenRAVE link
+        OpenRAVE::KinBody::LinkInfoPtr link_info;
+        BOOST_FOREACH (OpenRAVE::KinBody::LinkInfoPtr candidate,
+                       link_infos) {
+            if (candidate->_name == link_name) {
+                link_info = candidate;
+                break;
+            }
+        }
+        if (!link_info) {
+            throw std::runtime_error(boost::str(
+                boost::format("Unable to find a corresponding link '%s'")
+                % link_name));
+        }
+
+        // <geometry_group> element
+        const char* geometry_group_name;
+        for (TiXmlElement* geometry_group_element = link_handle.FirstChild("geometry_group").Element();
+             geometry_group_element;
+             geometry_group_element = geometry_group_element->NextSiblingElement("geometry_group"))
+        {
+            geometry_group_name = geometry_group_element->Attribute("name");
+            if (!geometry_group_name) {
+                throw std::runtime_error(boost::str(
+                    boost::format("Unable to get geometry_group name for link '%s':")
+                    % link_name));
+            }
+
+            // Add this geometry group to our set of groups
+            geometry_group_names_set.insert(geometry_group_name);
+
+            TiXmlHandle geometry_group_handle = TiXmlHandle(geometry_group_element);
+
+            // <origin> element
+            urdf::Pose origin_pose;
+            for (TiXmlElement* origin_element = geometry_group_handle.FirstChild("origin").Element();
+                 origin_element;
+                 origin_element = origin_element->NextSiblingElement("origin"))
+            {
+                std::string rpy_str = std::string("0 0 0");
+                const char* rpy = origin_element->Attribute("rpy");
+                if (rpy) {
+                    rpy_str = std::string(rpy);
+                }
+
+                std::string xyz_str = std::string("0 0 0");
+                const char* xyz = origin_element->Attribute("xyz");
+                if (xyz) {
+                    xyz_str = std::string(xyz);
+                }
+
+                origin_pose.rotation.init(rpy_str);
+                origin_pose.position.init(xyz_str);
+
+                break; // only find first <origin> element
+            }
+
+            // <geometry> element
+            for (TiXmlElement* geometry_element = geometry_group_handle.FirstChild("geometry").Element();
+                 geometry_element;
+                 geometry_element = geometry_element->NextSiblingElement("geometry"))
+            {
+                TiXmlHandle geometry_handle = TiXmlHandle(geometry_element);
+
+                // <mesh> element
+                for (TiXmlElement* mesh_element = geometry_handle.FirstChild("mesh").Element();
+                     mesh_element;
+                     mesh_element = mesh_element->NextSiblingElement("mesh"))
+                {
+                    const char* mesh_filename = mesh_element->Attribute("filename");
+                    if (!mesh_filename) {
+                        throw std::runtime_error(boost::str(
+                            boost::format("Unable to get 'filename' attribute for"
+                                          " mesh element for link '%s':")
+                                          % link_name));
+                    }
+
+                    // Add this mesh to a separate collision geometry group
+                    std::vector<OpenRAVE::KinBody::GeometryInfoPtr> &geom_infos
+                            = link_info->_mapExtraGeometries[geometry_group_name];
+
+                    OpenRAVE::KinBody::GeometryInfoPtr geom_info
+                        = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>();
+                    geom_info->_t = URDFPoseToRaveTransform(origin_pose);
+                    geom_info->_bModifiable = false;
+
+                    // Set collision geometry to be visible, so it can be
+                    // seen in the 'visual' group in or_rviz
+                    geom_info->_bVisible = true;
+
+                    geom_info->_type = OpenRAVE::GT_TriMesh;
+                    geom_info->_filenamecollision = resolveURI(mesh_filename);
+
+                    // The mesh <scale> tag is not parsed, also apparently it
+                    // doesn't seem to do anything
+                    //geom_info->_vCollisionScale = URDFVectorToRaveVector(mesh_scale);
+
+                    boost::shared_ptr<OpenRAVE::TriMesh> trimesh =
+                                              boost::make_shared<OpenRAVE::TriMesh>();
+                    trimesh = GetEnv()->ReadTrimeshURI(trimesh,
+                                                       geom_info->_filenamecollision);
+                    if (trimesh) {
+                        // The _vCollisionScale property does nothing, so we have to
+                        // manually scale the mesh.
+                        BOOST_FOREACH(OpenRAVE::Vector &vertex, trimesh->vertices) {
+                            vertex *= geom_info->_vCollisionScale;
+                        }
+                        geom_info->_meshcollision = *trimesh;
+                    }
+                    else {
+                        RAVELOG_WARN("Link %s: Failed loading collision mesh %s \n",
+                                     link_name, geom_info->_filenamecollision.c_str());
+                    }
+
+                    geom_infos.push_back(geom_info);
+
+                    break; // only find first <mesh> element
+                }
+
+                break; // only find first <geometry> element
+            }
+        } // end <collision> element
+    } // end <link> element
+
+    // Each OpenRAVE link must be a member of each geometry group,
+    // so iterate over all the links and add them to each of the
+    // geometry groups.
+    // If a specific geometry group (and mesh) was already specified for
+    // a link, calling calling mapExtraGeometries[] again does nothing.
+    BOOST_FOREACH(OpenRAVE::KinBody::LinkInfoPtr link_info, link_infos) {
+        BOOST_FOREACH(std::string geometry_group_name, geometry_group_names_set) {
+            link_info->_mapExtraGeometries[geometry_group_name];
+        }
+    }
+}
+
 /** Opens a URDF file and returns a robot in OpenRAVE */
 bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
 {
     try {
-        // Get filename from input arguments
+         // Get filename from input arguments
         std::string input_urdf_uri, input_srdf_uri;
         sinput >> input_urdf_uri >> input_srdf_uri;
 
@@ -725,7 +899,7 @@ bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
         OpenRAVE::KinBodyPtr body;
         std::string name;
 
-        // Load the URDF file.
+        // Parse the URDF file
         urdf::Model urdf_model;
         if (!urdf_model.initFile(input_urdf)) {
           throw OpenRAVE::openrave_exception("Failed to open URDF file.");
@@ -735,15 +909,23 @@ bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
         std::vector<OpenRAVE::KinBody::JointInfoPtr> joint_infos;
         ParseURDF(urdf_model, link_infos, joint_infos);
 
+        // Parse the SRDF file, if specified
+        srdf::Model srdf_model;
+        std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> manip_infos;
+        std::vector<OpenRAVE::RobotBase::AttachedSensorInfoPtr> sensor_infos;
         if (!input_srdf.empty()) {
-            // Load the SRDF file.
-            srdf::Model srdf_model;
             srdf_model.initFile(urdf_model, input_srdf);
-
-            std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> manip_infos;
-            std::vector<OpenRAVE::RobotBase::AttachedSensorInfoPtr> sensor_infos;
             ParseSRDF(urdf_model, srdf_model, link_infos, joint_infos, manip_infos);
+        }
 
+        // Parse the URDF again to find <geometry_group> elements
+        TiXmlDocument xml_doc(input_urdf.c_str());
+        if (!xml_doc.LoadFile()) {
+            throw std::runtime_error("Could not load the URDF file.");
+        }
+        ProcessGeometryGroupTagsFromURDF(xml_doc, link_infos);
+
+        if (!input_srdf.empty()) {
             // Cast all of the vector contents to const.
             std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos_const
                 = MakeConst(link_infos);
@@ -775,7 +957,7 @@ bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
 
         body->SetName(urdf_model.getName());
         GetEnv()->Add(body, true);
-        soutput << body->GetName(); 
+        soutput << body->GetName();
         return true;
     } catch (std::runtime_error const &e) {
         RAVELOG_ERROR("Failed loading URDF model: %s\n", e.what());
