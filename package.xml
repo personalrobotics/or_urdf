@@ -21,7 +21,6 @@
   <run_depend>roslib</run_depend>
   <run_depend>srdfdom</run_depend>
   <run_depend>urdf</run_depend>
-  <test_depend>herb_description</test_depend>
   <test_depend>python-nose</test_depend>
   <test_depend>python-numpy</test_depend>
   <test_depend>python</test_depend>
