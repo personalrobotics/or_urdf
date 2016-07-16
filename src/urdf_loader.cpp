@@ -6,6 +6,7 @@
 #include "urdf_loader.h"
 #include "boostfs_helpers.h"
 
+#include <boost/typeof/std/utility.hpp>
 #include <boost/algorithm/string/predicate.hpp>
 #include <boost/foreach.hpp>
 #include <boost/make_shared.hpp>
@@ -160,68 +161,6 @@ OpenRAVE::Transform URDFPoseToRaveTransform(const urdf::Pose &pose)
 {
     return OpenRAVE::Transform(URDFRotationToRaveVector(pose.rotation),
                                URDFVectorToRaveVector(pose.position));
-}
-  
-/** Resolves URIs for file:// and package:// paths */
-std::string resolveURI(const std::string &path)
-{
-    static std::map<std::string, std::string> package_cache;
-    std::string uri = path;
-
-    if (uri.find("file://") == 0) {
-        // Strip off the file://
-        uri.erase(0, strlen("file://"));
-
-        // Resolve the mesh path as a file URI
-        boost::filesystem::path file_path(uri);
-        return file_path.string();
-    } else if (uri.find("package://") == 0) {
-        // Strip off the package://
-        uri.erase(0, strlen("package://"));
-
-        // Resolve the mesh path as a ROS package URI
-        size_t package_end = uri.find("/");
-        std::string package = uri.substr(0, package_end);
-        std::string package_path;
-
-        // Use the package cache if we have resolved this package before
-        std::map<std::string, std::string>::iterator it
-                = package_cache.find(package);
-        if (it != package_cache.end()) {
-            package_path = it->second;
-        } else {
-            package_path = ros::package::getPath(package);
-            package_cache[package] = package_path;
-        }
-
-        // Show a warning if the package was not resolved
-        if (package_path.empty()) {
-            RAVELOG_WARN("Unable to find package '%s'.\n", package.c_str());
-            return "";
-        }
-
-        // Append the remaining relative path
-        boost::filesystem::path file_path(package_path);
-        uri.erase(0, package_end);
-        file_path /= uri;
-
-        // Return the canonical path
-        return file_path.string();
-    } else {
-        RAVELOG_WARN("Cannot handle this type of URI.\n");
-        return "";
-    }
-}
-
-std::string resolveURIorPath(const std::string &path)
-{
-    using boost::algorithm::starts_with;
-
-    if (starts_with(path, "package://") || starts_with(path, "file://")) {
-        return resolveURI(path);
-    } else {
-        return path;
-    }
 }
 
   /** Converts URDF joint to an OpenRAVE joint string and a boolean
@@ -962,6 +901,37 @@ bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
     } catch (std::runtime_error const &e) {
         RAVELOG_ERROR("Failed loading URDF model: %s\n", e.what());
         return false;
+    }
+}
+
+/** Resolves URIs for file:// and package:// paths */
+std::string URDFLoader::resolveURI(const std::string &path) const
+{
+    std::string uri = path;
+
+    if (uri.find("file://") == 0) {
+        // Strip off the file://
+        uri.erase(0, strlen("file://"));
+
+        // Resolve the mesh path as a file URI
+        boost::filesystem::path file_path(uri);
+        return file_path.string();
+    } else if (uri.find("package://") == 0) {
+        return _catkin_finder.find(uri);
+    } else {
+        RAVELOG_WARN("Cannot handle this type of URI.\n");
+        return "";
+    }
+}
+
+std::string URDFLoader::resolveURIorPath(const std::string &path) const
+{
+    using boost::algorithm::starts_with;
+
+    if (starts_with(path, "package://") || starts_with(path, "file://")) {
+        return resolveURI(path);
+    } else {
+        return path;
     }
 }
 
