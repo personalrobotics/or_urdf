@@ -16,6 +16,8 @@
 
 #include <tinyxml.h>
 
+#include "catkin_finder.h"
+
 namespace or_urdf
 {
   class URDFLoader : public OpenRAVE::ModuleBase
@@ -57,6 +59,10 @@ namespace or_urdf
   private:
     /** Reference to OpenRAVE environment, filled in on construction */
     OpenRAVE::EnvironmentBasePtr _env;
+    or_urdf::CatkinFinder _catkin_finder;
+
+    std::string resolveURI(const std::string &path) const;
+    std::string resolveURIorPath(const std::string &path) const;
   };
   
 } /* namespace or_urdf */
