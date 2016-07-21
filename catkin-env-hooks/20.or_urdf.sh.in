@@ -8,11 +8,11 @@ else
   PLUGINS=@CMAKE_INSTALL_PREFIX@/lib/openrave-@OpenRAVE_LIBRARY_SUFFIX@
 fi
 
-# append to paths (if not already there)
+# prepend to paths (if not already there)
 # from http://unix.stackexchange.com/a/124447
 case ":${OPENRAVE_PLUGINS:=$PLUGINS}:" in
     *:$PLUGINS:*) ;;
-    *) OPENRAVE_PLUGINS="$OPENRAVE_PLUGINS:$PLUGINS" ;;
+    *) OPENRAVE_PLUGINS="$PLUGINS:$OPENRAVE_PLUGINS" ;;
 esac
 
 export OPENRAVE_PLUGINS
