@@ -4,7 +4,6 @@ project(or_urdf)
 list(INSERT CMAKE_MODULE_PATH 0 "${PROJECT_SOURCE_DIR}/cmake") 
 
 find_package(catkin REQUIRED COMPONENTS
-    roslib
     srdfdom
     urdf
 )
@@ -40,6 +39,7 @@ link_directories(
 add_library("${PROJECT_NAME}_plugin" MODULE
     src/urdf_loader.cpp
     src/catkin_finder.cpp
+    src/plugin.cpp
 )
 set_target_properties(${PROJECT_NAME}_plugin PROPERTIES
     PREFIX ""

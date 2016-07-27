@@ -12,18 +12,8 @@
 #include <boost/make_shared.hpp>
 #include <boost/format.hpp>
 #include <boost/filesystem.hpp>
-#include <ros/package.h>
 
-OpenRAVE::InterfaceBasePtr CreateInterfaceValidated(
-        OpenRAVE::InterfaceType type, const std::string& interfacename,
-        std::istream& sinput, OpenRAVE::EnvironmentBasePtr env)
-{
-    if (type == OpenRAVE::PT_Module && interfacename == "urdf") {
-        return OpenRAVE::InterfaceBasePtr(new or_urdf::URDFLoader(env));
-    } else {
-        return OpenRAVE::InterfaceBasePtr();
-    }
-}
+namespace or_urdf {
 
 void GetURDFRootLinks(
         std::vector<boost::shared_ptr<urdf::Link const> > const &links,
@@ -116,17 +106,6 @@ void ExtractSRDFGroup(urdf::Model const &urdf, srdf::Model::Group const &group,
     }
 }
 
-void GetPluginAttributesValidated(OpenRAVE::PLUGININFO& info)
-{
-    info.interfacenames[OpenRAVE::PT_Module].push_back("URDF");
-}
-
-void DestroyPlugin()
-{
-}
-
-namespace or_urdf {
-
 template <class T>
 std::vector<boost::shared_ptr<T const> > MakeConst(
         std::vector<boost::shared_ptr<T> > const &vconst)
@@ -194,6 +173,24 @@ std::pair<OpenRAVE::KinBody::JointType, bool> URDFJointTypeToRaveJointType(int t
         throw std::runtime_error(boost::str(
             boost::format("Unkonwn type of joint %d.") % type));
     }
+}
+
+URDFLoader::URDFLoader(OpenRAVE::EnvironmentBasePtr env)
+  : OpenRAVE::ModuleBase(env)
+{
+  __description = "URDFLoader: Loader that imports URDF files.";
+  _env = env;
+
+  RegisterCommand("load", boost::bind(&URDFLoader::load, this, _1, _2),
+                  "load URDF and SRDF from file");
+}
+
+URDFLoader::~URDFLoader()
+{
+}
+
+void URDFLoader::Destroy()
+{
 }
 
 void URDFLoader::ParseURDF(
@@ -935,4 +932,4 @@ std::string URDFLoader::resolveURIorPath(const std::string &path) const
     }
 }
 
-} 
+}

@@ -9,13 +9,9 @@
 #define URDF_LOADER_H
 
 #include <openrave/openrave.h>
-#include <openrave/plugin.h>
 #include <boost/bind.hpp>
 #include <urdf/model.h>
 #include <srdfdom/model.h>
-
-#include <tinyxml.h>
-
 #include "catkin_finder.h"
 
 namespace or_urdf
@@ -26,19 +22,11 @@ namespace or_urdf
     /** Opens a URDF file and returns a robot in OpenRAVE */
     bool load(std::ostream& sout, std::istream& sin);
     
-    /** Constructs plugin and registers functions */
-    URDFLoader(OpenRAVE::EnvironmentBasePtr env) : OpenRAVE::ModuleBase(env)
-    {
-      __description = "URDFLoader: Loader that imports URDF files.";
-      _env = env;
-
-      RegisterCommand("load", boost::bind(&URDFLoader::load, this, _1, _2),
-                      "load URDF and SRDF from file");
-    }
-
-    void Destroy() { RAVELOG_INFO("URDF loader unloaded from environment\n"); }
+    URDFLoader(OpenRAVE::EnvironmentBasePtr env);
     
-    virtual ~URDFLoader() {}
+    virtual ~URDFLoader();
+
+    void Destroy();
 
     void ParseURDF(urdf::Model &model, std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos,
                    std::vector<OpenRAVE::KinBody::JointInfoPtr> &joint_infos);
@@ -52,9 +40,6 @@ namespace or_urdf
     void ProcessGeometryGroupTagsFromURDF(
                    TiXmlDocument &xml_doc,
                    std::vector<OpenRAVE::KinBody::LinkInfoPtr> &link_infos);
-    
-    /* This is called on env.LoadProblem(m, 'command') */
-    int main(const std::string& cmd) { RAVELOG_INFO("URDF loader initialized with command: %s\n", cmd.c_str()); return 0; }
 
   private:
     /** Reference to OpenRAVE environment, filled in on construction */
