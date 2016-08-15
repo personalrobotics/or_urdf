@@ -828,7 +828,7 @@ void URDFLoader::ProcessGeometryGroupTagsFromURDF(
 }
 
 /** Opens a URDF file and returns a robot in OpenRAVE */
-bool URDFLoader::loadFile(std::ostream &soutput, std::istream &sinput)
+bool URDFLoader::loadURI(std::ostream &soutput, std::istream &sinput)
 {
   try {
     // Get filename from input arguments
@@ -860,12 +860,21 @@ bool URDFLoader::loadFile(std::ostream &soutput, std::istream &sinput)
     std::string uri = srdf_model == nullptr ?
                           input_urdf_uri :
                           input_urdf_uri + " " + input_srdf_uri;
-    soutput << load(urdf_model, xml_doc, srdf_model, uri);
+    soutput << loadModel(urdf_model, xml_doc, srdf_model, uri);
     return true;
   } catch (std::runtime_error const &e) {
     RAVELOG_ERROR("Failed loading URDF model: %s\n", e.what());
     return false;
   }
+}
+
+/** load URDF and SRDF from file/URI with deprecated warning for "load" command
+ * name
+ */
+bool URDFLoader::deprecatedLoad(std::ostream &soutput, std::istream &sinput)
+{
+  RAVELOG_WARN("URDFLoader 'load' command is deprecated. Use 'LoadURI' instead.\n");
+  return loadURI(soutput, sinput);
 }
 
 /** Loads a JSON-wrapped URDF and optionally SRDF string and returns a robot in
@@ -933,7 +942,7 @@ bool URDFLoader::loadJsonString(std::ostream &soutput, std::istream &sinput)
       throw std::runtime_error("Could not parse the URDF file: " + xmlerr);
     }
 
-    soutput << load(urdf_model, xml_doc, srdf_model);
+    soutput << loadModel(urdf_model, xml_doc, srdf_model);
     return true;
 
   } catch (std::runtime_error const &e) {
@@ -942,9 +951,10 @@ bool URDFLoader::loadJsonString(std::ostream &soutput, std::istream &sinput)
   }
 }
 
-std::string URDFLoader::load(urdf::Model &urdf_model, TiXmlDocument &xml_doc,
-                             std::shared_ptr<srdf::Model> srdf_model,
-                             std::string uri)
+std::string URDFLoader::loadModel(urdf::Model &urdf_model,
+                                  TiXmlDocument &xml_doc,
+                                  std::shared_ptr<srdf::Model> srdf_model,
+                                  std::string uri)
 {
   OpenRAVE::KinBodyPtr body;
   std::string name;
