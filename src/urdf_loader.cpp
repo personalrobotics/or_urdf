@@ -5,6 +5,9 @@
  */
 #include "urdf_loader.h"
 #include "boostfs_helpers.h"
+#include "picojson.h"
+
+#include <iterator>
 
 #include <boost/typeof/std/utility.hpp>
 #include <boost/algorithm/string/predicate.hpp>
@@ -368,7 +371,7 @@ void URDFLoader::ParseURDF(
             }
         }
 
-        // Verify that the "visual" and "spheres" groups always exist. Recall 
+        // Verify that the "visual" and "spheres" groups always exist. Recall
         // that accessing an element with operator[] creates it using the default
         // no-arg constructor if it does not already exist.
         link_info->_mapExtraGeometries["visual"];
@@ -378,7 +381,7 @@ void URDFLoader::ParseURDF(
     }
 
     // Populate vector of joints
-    std::string joint_name; 
+    std::string joint_name;
     boost::shared_ptr<urdf::Joint> joint_ptr;
 
     // Parse the joint properties
@@ -548,7 +551,7 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
         BOOST_ASSERT(manip_root_link);
         RAVELOG_DEBUG("Detected '%s' as root link of manipulator group '%s'.\n",
                      manip_root_link->name.c_str(), manip_group.name_.c_str());
-                     
+
         // Find the parent link of the end-effector. This serves as the tip
         // link of the manipulator.
         // TODO: std::map<std::string, OpenRAVE::KinBody::LinkInfoPtr> link_map;
@@ -825,83 +828,181 @@ void URDFLoader::ProcessGeometryGroupTagsFromURDF(
 }
 
 /** Opens a URDF file and returns a robot in OpenRAVE */
-bool URDFLoader::load(std::ostream &soutput, std::istream &sinput)
+bool URDFLoader::loadURI(std::ostream &soutput, std::istream &sinput)
 {
-    try {
-         // Get filename from input arguments
-        std::string input_urdf_uri, input_srdf_uri;
-        sinput >> input_urdf_uri >> input_srdf_uri;
+  try {
+    // Get filename from input arguments
+    std::string input_urdf_uri, input_srdf_uri;
+    sinput >> input_urdf_uri >> input_srdf_uri;
 
-        std::string const input_urdf = resolveURIorPath(input_urdf_uri);
-        std::string const input_srdf = resolveURIorPath(input_srdf_uri);
+    std::string const input_urdf = resolveURIorPath(input_urdf_uri);
+    std::string const input_srdf = resolveURIorPath(input_srdf_uri);
 
-        OpenRAVE::KinBodyPtr body;
-        std::string name;
-
-        // Parse the URDF file
-        urdf::Model urdf_model;
-        if (!urdf_model.initFile(input_urdf)) {
-          throw OpenRAVE::openrave_exception("Failed to open URDF file.");
-        }
-
-        std::vector<OpenRAVE::KinBody::LinkInfoPtr> link_infos;
-        std::vector<OpenRAVE::KinBody::JointInfoPtr> joint_infos;
-        ParseURDF(urdf_model, link_infos, joint_infos);
-
-        // Parse the SRDF file, if specified
-        srdf::Model srdf_model;
-        std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> manip_infos;
-        std::vector<OpenRAVE::RobotBase::AttachedSensorInfoPtr> sensor_infos;
-        if (!input_srdf.empty()) {
-            srdf_model.initFile(urdf_model, input_srdf);
-            ParseSRDF(urdf_model, srdf_model, link_infos, joint_infos, manip_infos);
-        }
-
-        // Parse the URDF again to find <geometry_group> elements
-        TiXmlDocument xml_doc(input_urdf.c_str());
-        if (!xml_doc.LoadFile()) {
-            throw std::runtime_error("Could not load the URDF file.");
-        }
-        ProcessGeometryGroupTagsFromURDF(xml_doc, link_infos);
-
-        if (!input_srdf.empty()) {
-            // Cast all of the vector contents to const.
-            std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos_const
-                = MakeConst(link_infos);
-            std::vector<OpenRAVE::KinBody::JointInfoConstPtr> joint_infos_const
-                = MakeConst(joint_infos);
-            std::vector<OpenRAVE::RobotBase::ManipulatorInfoConstPtr> manip_infos_const
-                = MakeConst(manip_infos);
-            std::vector<OpenRAVE::RobotBase::AttachedSensorInfoConstPtr> sensor_infos_const
-                = MakeConst(sensor_infos);
-
-            // TODO: Sort the joints to guarantee contiguous manipulators.
-
-            OpenRAVE::RobotBasePtr robot = OpenRAVE::RaveCreateRobot(GetEnv(), "");
-            robot->Init(link_infos_const, joint_infos_const, manip_infos_const,
-                        sensor_infos_const,
-                        input_urdf_uri + " " + input_srdf_uri);
-            body = robot;
-        }
-        // It's just a URDF file, so create a KinBody.
-        else {
-            std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos_const
-                = MakeConst(link_infos);
-            std::vector<OpenRAVE::KinBody::JointInfoConstPtr> joint_infos_const
-                = MakeConst(joint_infos);
-
-            body = OpenRAVE::RaveCreateKinBody(GetEnv(), "");
-            body->Init(link_infos_const, joint_infos_const, input_urdf_uri);
-        }
-
-        body->SetName(urdf_model.getName());
-        GetEnv()->Add(body, true);
-        soutput << body->GetName();
-        return true;
-    } catch (std::runtime_error const &e) {
-        RAVELOG_ERROR("Failed loading URDF model: %s\n", e.what());
-        return false;
+    // Parse the URDF file
+    urdf::Model urdf_model;
+    if (!urdf_model.initFile(input_urdf)) {
+      throw std::runtime_error("Failed to open URDF file.");
     }
+
+    // Parse the SRDF file, if specified
+    std::shared_ptr<srdf::Model> srdf_model;
+    if (!input_srdf.empty()) {
+      srdf_model = std::make_shared<srdf::Model>();
+      srdf_model->initFile(urdf_model, input_srdf);
+    }
+
+    // Parse the URDF again to find <geometry_group> elements
+    TiXmlDocument xml_doc(input_urdf.c_str());
+    if (!xml_doc.LoadFile()) {
+      throw std::runtime_error("Could not load the URDF file.");
+    }
+
+    std::string uri = srdf_model == nullptr ?
+                          input_urdf_uri :
+                          input_urdf_uri + " " + input_srdf_uri;
+    soutput << loadModel(urdf_model, xml_doc, srdf_model, uri);
+    return true;
+  } catch (std::runtime_error const &e) {
+    RAVELOG_ERROR("Failed loading URDF model: %s\n", e.what());
+    return false;
+  }
+}
+
+/** load URDF and SRDF from file/URI with deprecated warning for "load" command
+ * name
+ */
+bool URDFLoader::deprecatedLoad(std::ostream &soutput, std::istream &sinput)
+{
+  RAVELOG_WARN("URDFLoader 'load' command is deprecated. Use 'LoadURI' instead.\n");
+  return loadURI(soutput, sinput);
+}
+
+/** Loads a JSON-wrapped URDF and optionally SRDF string and returns a robot in
+ * OpenRAVE.
+ *
+ * The JSON object must have the following schema (srdf property is optional):
+ *
+ * { "urdf": "<?xml...", "srdf": "<?xml..." }
+ */
+bool URDFLoader::loadJsonString(std::ostream &soutput, std::istream &sinput)
+{
+  try {
+    // load json wrapper
+    std::string json_wrapper(std::istreambuf_iterator<char>(sinput), {});
+    picojson::value json_v;
+    std::string err = picojson::parse(json_v, json_wrapper);
+    if (!err.empty()) {
+      throw std::runtime_error("Failed to parse JSON wrapper: " + err);
+    }
+
+    if (!json_v.is<picojson::object>()) {
+      throw std::runtime_error("JSON wrapper not JSON object");
+    }
+    picojson::object &obj = json_v.get<picojson::object>();
+
+    // parse and and load URDF
+    auto urdf_v = obj.find("urdf");
+    if (urdf_v == obj.end()) {
+      throw std::runtime_error("JSON wrapper has no \"urdf\" property");
+    }
+    if (!urdf_v->second.is<std::string>()) {
+      throw std::runtime_error(
+          "JSON wrapper \"urdf\" property is not a string");
+    }
+    std::string urdf_string = urdf_v->second.get<std::string>();
+
+    urdf::Model urdf_model;
+    if (!urdf_model.initString(urdf_string)) {
+      throw std::runtime_error("Failed to load URDF from string.");
+    }
+
+    // optionally parse and load SRDF
+    std::shared_ptr<srdf::Model> srdf_model;
+    auto srdf_v = obj.find("srdf");
+    if (srdf_v == obj.end()) {
+      RAVELOG_INFO("JSON wrapper has no \"srdf\" property");
+    } else {
+      if (!srdf_v->second.is<std::string>()) {
+        throw std::runtime_error(
+            "JSON wrapper \"srdf\" property is not a string");
+      }
+      std::string srdf_string = srdf_v->second.get<std::string>();
+      srdf_model = std::make_shared<srdf::Model>();
+
+      if (!srdf_model->initString(urdf_model, srdf_string)) {
+        throw std::runtime_error("Failed to load SRDF from string.");
+      }
+    }
+
+    // Parse the URDF again to find <geometry_group> elements
+    TiXmlDocument xml_doc;
+    xml_doc.Parse(urdf_string.c_str());
+    if (xml_doc.Error()) {
+      std::string xmlerr = xml_doc.ErrorDesc();
+      throw std::runtime_error("Could not parse the URDF file: " + xmlerr);
+    }
+
+    soutput << loadModel(urdf_model, xml_doc, srdf_model);
+    return true;
+
+  } catch (std::runtime_error const &e) {
+    RAVELOG_ERROR("Failed loading URDF/SRDF model: %s\n", e.what());
+    return false;
+  }
+}
+
+std::string URDFLoader::loadModel(urdf::Model &urdf_model,
+                                  TiXmlDocument &xml_doc,
+                                  std::shared_ptr<srdf::Model> srdf_model,
+                                  std::string uri)
+{
+  OpenRAVE::KinBodyPtr body;
+  std::string name;
+
+  std::vector<OpenRAVE::KinBody::LinkInfoPtr> link_infos;
+  std::vector<OpenRAVE::KinBody::JointInfoPtr> joint_infos;
+  ParseURDF(urdf_model, link_infos, joint_infos);
+
+  std::vector<OpenRAVE::RobotBase::ManipulatorInfoPtr> manip_infos;
+  std::vector<OpenRAVE::RobotBase::AttachedSensorInfoPtr> sensor_infos;
+  if (srdf_model != nullptr) {
+    ParseSRDF(urdf_model, *srdf_model, link_infos, joint_infos, manip_infos);
+  }
+
+  ProcessGeometryGroupTagsFromURDF(xml_doc, link_infos);
+
+  if (srdf_model != nullptr) {
+    // Cast all of the vector contents to const.
+    std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos_const =
+        MakeConst(link_infos);
+    std::vector<OpenRAVE::KinBody::JointInfoConstPtr> joint_infos_const =
+        MakeConst(joint_infos);
+    std::vector<OpenRAVE::RobotBase::ManipulatorInfoConstPtr>
+        manip_infos_const = MakeConst(manip_infos);
+    std::vector<OpenRAVE::RobotBase::AttachedSensorInfoConstPtr>
+        sensor_infos_const = MakeConst(sensor_infos);
+
+    // TODO: Sort the joints to guarantee contiguous manipulators.
+
+    OpenRAVE::RobotBasePtr robot = OpenRAVE::RaveCreateRobot(GetEnv(), "");
+    robot->Init(link_infos_const, joint_infos_const, manip_infos_const,
+                sensor_infos_const, uri);
+    body = robot;
+  }
+  // It's just a URDF file, so create a KinBody.
+  else {
+    std::vector<OpenRAVE::KinBody::LinkInfoConstPtr> link_infos_const =
+        MakeConst(link_infos);
+    std::vector<OpenRAVE::KinBody::JointInfoConstPtr> joint_infos_const =
+        MakeConst(joint_infos);
+
+    body = OpenRAVE::RaveCreateKinBody(GetEnv(), "");
+    body->Init(link_infos_const, joint_infos_const, uri);
+  }
+
+  body->SetName(urdf_model.getName());
+  GetEnv()->Add(body, true);
+  return body->GetName();
 }
 
 /** Resolves URIs for file:// and package:// paths */
@@ -935,4 +1036,4 @@ std::string URDFLoader::resolveURIorPath(const std::string &path) const
     }
 }
 
-} 
+}

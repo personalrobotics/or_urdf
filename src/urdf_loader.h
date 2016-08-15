@@ -8,6 +8,9 @@
 #ifndef URDF_LOADER_H
 #define URDF_LOADER_H
 
+#include <memory>
+#include <string>
+
 #include <openrave/openrave.h>
 #include <openrave/plugin.h>
 #include <boost/bind.hpp>
@@ -24,7 +27,9 @@ namespace or_urdf
   {
   public:
     /** Opens a URDF file and returns a robot in OpenRAVE */
-    bool load(std::ostream& sout, std::istream& sin);
+    bool loadURI(std::ostream& sout, std::istream& sin);
+    bool loadJsonString(std::ostream& sout, std::istream& sin);
+    bool deprecatedLoad(std::ostream&, std::istream& sin);
     
     /** Constructs plugin and registers functions */
     URDFLoader(OpenRAVE::EnvironmentBasePtr env) : OpenRAVE::ModuleBase(env)
@@ -32,8 +37,12 @@ namespace or_urdf
       __description = "URDFLoader: Loader that imports URDF files.";
       _env = env;
 
-      RegisterCommand("load", boost::bind(&URDFLoader::load, this, _1, _2),
-                      "load URDF and SRDF from file");
+      RegisterCommand("LoadURI", boost::bind(&URDFLoader::loadURI, this, _1, _2),
+                      "load URDF and SRDF from file/URI");
+      RegisterCommand("LoadString", boost::bind(&URDFLoader::loadJsonString, this, _1, _2),
+                      "load URDF and SRDF from json string wrapping XML");
+      RegisterCommand("load", boost::bind(&URDFLoader::deprecatedLoad, this, _1, _2),
+                      "Deprecated method name to load URDF and SRDF from file/URI");
     }
 
     void Destroy() { RAVELOG_INFO("URDF loader unloaded from environment\n"); }
@@ -61,6 +70,9 @@ namespace or_urdf
     OpenRAVE::EnvironmentBasePtr _env;
     or_urdf::CatkinFinder _catkin_finder;
 
+    std::string loadModel(urdf::Model &urdf_model, TiXmlDocument &xml_doc,
+                     std::shared_ptr<srdf::Model> srdf_model = nullptr,
+                     std::string uri = std::string());
     std::string resolveURI(const std::string &path) const;
     std::string resolveURIorPath(const std::string &path) const;
   };

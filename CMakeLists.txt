@@ -25,7 +25,6 @@ catkin_add_env_hooks("20.${PROJECT_NAME}"
 )
 
 include_directories(
-    "include/${PROJECT_NAME}"
     ${Boost_INCLUDE_DIRS}
     ${catkin_INCLUDE_DIRS}
     ${TinyXML2_INCLUDE_DIRS}
