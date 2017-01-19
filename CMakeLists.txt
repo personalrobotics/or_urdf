@@ -24,7 +24,7 @@ catkin_add_env_hooks("20.${PROJECT_NAME}"
    DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/catkin-env-hooks"
 )
 
-include_directories(
+include_directories(SYSTEM
     ${Boost_INCLUDE_DIRS}
     ${catkin_INCLUDE_DIRS}
     ${TinyXML2_INCLUDE_DIRS}
