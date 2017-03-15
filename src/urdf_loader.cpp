@@ -597,7 +597,7 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
         // TODO: What about the end-effector direction?
         BOOST_AUTO(manip_info,
                    boost::make_shared<OpenRAVE::RobotBase::ManipulatorInfo>());
-        manip_info->_name = manip_group.name_;
+        manip_info->_name = end_effector.name_;
         manip_info->_sBaseLinkName = manip_root_link->name;
         manip_info->_vdirection = OpenRAVE::Vector(0, 0, 1);
         manip_info->_vChuckingDirection.resize(gripper_joints.size(), 0.0);
