@@ -45,7 +45,7 @@ set_target_properties(${PROJECT_NAME}_plugin PROPERTIES
     COMPILE_FLAGS "${OpenRAVE_CXX_FLAGS}"
     LINK_FLAGS "${OpenRAVE_LINK_FLAGS}"
     LIBRARY_OUTPUT_DIRECTORY
-    "${CATKIN_DEVEL_PREFIX}/lib/openrave-${OpenRAVE_LIBRARY_SUFFIX}")
+    "${CATKIN_DEVEL_PREFIX}/share/openrave-${OpenRAVE_LIBRARY_SUFFIX}/plugins")
 target_link_libraries("${PROJECT_NAME}_plugin"
     ${catkin_LIBRARIES}
     ${TinyXML2_LIBRARIES}
@@ -57,6 +57,6 @@ if(CATKIN_ENABLE_TESTING)
 endif(CATKIN_ENABLE_TESTING)
 
 install(TARGETS "${PROJECT_NAME}_plugin"
-    LIBRARY DESTINATION "lib/openrave-${OpenRAVE_LIBRARY_SUFFIX}"
+    LIBRARY DESTINATION "share/openrave-${OpenRAVE_LIBRARY_SUFFIX}/plugins"
 )
 
