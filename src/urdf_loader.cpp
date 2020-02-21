@@ -28,10 +28,10 @@ OpenRAVE::InterfaceBasePtr CreateInterfaceValidated(
 }
 
 void GetURDFRootLinks(
-        std::vector<boost::shared_ptr<urdf::Link const> > const &links,
-        std::vector<boost::shared_ptr<urdf::Link const> >       *roots)
+        std::vector<urdf::LinkConstSharedPtr > const &links,
+        std::vector<urdf::LinkConstSharedPtr >       *roots)
 {
-    typedef boost::shared_ptr<urdf::Link const> LinkConstPtr;
+    typedef urdf::LinkConstSharedPtr LinkConstPtr;
 
     BOOST_ASSERT(roots);
     std::set<LinkConstPtr> const links_set(links.begin(), links.end());
@@ -57,11 +57,11 @@ srdf::Model::Group const &GetSRDFGroup(
 }
 
 void ExtractSRDFGroup(urdf::Model const &urdf, srdf::Model::Group const &group,
-                      std::vector<boost::shared_ptr<urdf::Link const> > *links,
-                      std::vector<boost::shared_ptr<urdf::Joint const> > *joints)
+                      std::vector<urdf::LinkConstSharedPtr > *links,
+                      std::vector<urdf::JointConstSharedPtr > *joints)
 {
-    typedef boost::shared_ptr<urdf::Link const> LinkConstPtr;
-    typedef boost::shared_ptr<urdf::Joint const> JointConstPtr;
+    typedef urdf::LinkConstSharedPtr LinkConstPtr;
+    typedef urdf::JointConstSharedPtr JointConstPtr;
 
     BOOST_ASSERT(links);
     BOOST_ASSERT(joints);
@@ -205,14 +205,14 @@ void URDFLoader::ParseURDF(
 {
     // Populate list of links from URDF model. We'll force the root link to be
     // first.
-    std::vector<boost::shared_ptr<urdf::Link> > link_vector;
+    std::vector<urdf::LinkSharedPtr > link_vector;
     model.getLinks(link_vector);
 
-    std::list<boost::shared_ptr<urdf::Link const> > link_list;
+    std::list<urdf::LinkConstSharedPtr > link_list;
     std::set<std::string> finished_links;
 
     link_list.insert(link_list.begin(), model.getRoot());
-    BOOST_FOREACH (boost::shared_ptr<urdf::Link> link, link_vector) {
+    BOOST_FOREACH (urdf::LinkConstSharedPtr link, link_vector) {
         if (link != model.getRoot()) {
             link_list.insert(link_list.end(), link);
         }
@@ -221,7 +221,7 @@ void URDFLoader::ParseURDF(
     // TODO: prevent infinite loops here
     // Iterate through all links, allowing deferred evaluation (putting links
     // back on the list) if their parents do not exist yet
-    boost::shared_ptr<urdf::Link const> link_ptr;
+    urdf::LinkConstSharedPtr link_ptr;
 
     while (!link_list.empty()) {
         // Get next element in list
@@ -235,7 +235,7 @@ void URDFLoader::ParseURDF(
         link_info->_name = link_ptr->name;
 
         // Set inertial parameters
-        boost::shared_ptr<urdf::Inertial> inertial = link_ptr->inertial;
+        urdf::InertialConstSharedPtr inertial = link_ptr->inertial;
         if (inertial) {
             // XXX: We should also specify the off-diagonal terms (ixy, iyz, ixz)
             // of the inertia tensor. We can do this in KinBody XML files, but I
@@ -247,17 +247,17 @@ void URDFLoader::ParseURDF(
         }
 
         // Set local transformation to be same as parent joint
-        boost::shared_ptr<urdf::Joint> parent_joint = link_ptr->parent_joint;
+        urdf::JointConstSharedPtr parent_joint = link_ptr->parent_joint;
         while (parent_joint) {
             link_info->_t = URDFPoseToRaveTransform(
                     parent_joint->parent_to_joint_origin_transform) * link_info->_t;
-            boost::shared_ptr<urdf::Link const> parent_link
+            urdf::LinkConstSharedPtr parent_link
                     = model.getLink(parent_joint->parent_link_name);
             parent_joint = parent_link->parent_joint;
         }
 
         // Set information for collision geometry
-        BOOST_FOREACH (boost::shared_ptr<urdf::Collision> collision,
+        BOOST_FOREACH (urdf::CollisionConstSharedPtr collision,
                        link_ptr->collision_array) {
             OpenRAVE::KinBody::GeometryInfoPtr geom_info
                     = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>();
@@ -331,7 +331,7 @@ void URDFLoader::ParseURDF(
         // geometry, so we'll instead create a zero-radius sphere with the
         // desired render mesh.
         // TODO: Why does GT_None crash OpenRAVE?
-        boost::shared_ptr<urdf::Visual> visual = link_ptr->visual;
+        urdf::VisualConstSharedPtr visual = link_ptr->visual;
         if (visual) {
             OpenRAVE::KinBody::GeometryInfoPtr geom_info
                 = boost::make_shared<OpenRAVE::KinBody::GeometryInfo>();
@@ -348,7 +348,7 @@ void URDFLoader::ParseURDF(
                 geom_info->_vRenderScale = URDFVectorToRaveVector(mesh.scale);
 
                 // If a material color is specified, use it.
-                boost::shared_ptr<urdf::Material> material = visual->material;
+                urdf::MaterialConstSharedPtr material = visual->material;
                 if (material) {
                     geom_info->_vDiffuseColor = URDFColorToRaveVector(material->color);
                     geom_info->_vAmbientColor = URDFColorToRaveVector(material->color);
@@ -381,15 +381,15 @@ void URDFLoader::ParseURDF(
 
     // Populate vector of joints
     std::string joint_name;
-    boost::shared_ptr<urdf::Joint> joint_ptr;
+    urdf::JointConstSharedPtr joint_ptr;
 
     // Parse the joint properties
-    std::vector<boost::shared_ptr<urdf::Joint> > ordered_joints;
+    std::vector<urdf::JointConstSharedPtr > ordered_joints;
     BOOST_FOREACH(boost::tie(joint_name, joint_ptr), model.joints_) {
         ordered_joints.push_back(joint_ptr);
     }
 
-    BOOST_FOREACH(boost::shared_ptr<urdf::Joint> joint_ptr, ordered_joints) {
+    BOOST_FOREACH(urdf::JointConstSharedPtr joint_ptr, ordered_joints) {
         OpenRAVE::KinBody::JointInfoPtr joint_info = boost::make_shared<OpenRAVE::KinBody::JointInfo>();
         joint_info->_name = joint_ptr->name;
         joint_info->_linkname0 = joint_ptr->parent_link_name;
@@ -410,7 +410,7 @@ void URDFLoader::ParseURDF(
         // URDF only supports linear mimic joints with a constant offset. We map
         // that into the correct position (index 0) and velocity (index 1)
         // equations for OpenRAVE.
-        boost::shared_ptr<urdf::JointMimic> mimic = joint_ptr->mimic;
+        urdf::JointMimicConstSharedPtr mimic = joint_ptr->mimic;
         if (mimic) {
             joint_info->_vmimic[0] = boost::make_shared<OpenRAVE::KinBody::MimicInfo>();
             joint_info->_vmimic[0]->_equations[0] = boost::str(boost::format("%s*%0.6f+%0.6f")
@@ -429,7 +429,7 @@ void URDFLoader::ParseURDF(
         joint_info->_vaxes[0] = URDFVectorToRaveVector(joint_axis);
 
         // Configure joint limits.
-        boost::shared_ptr<urdf::JointLimits> limits = joint_ptr->limits;
+        urdf::JointLimitsConstSharedPtr limits = joint_ptr->limits;
         if (limits) {
             // TODO: What about acceleration?
             joint_info->_vlowerlimit[0] = limits->lower;
@@ -513,8 +513,8 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
 
     // Create manipulators.
     BOOST_FOREACH (srdf::Model::EndEffector const &end_effector, srdf.getEndEffectors()) {
-        typedef boost::shared_ptr<urdf::Link const> LinkConstPtr;
-        typedef boost::shared_ptr<urdf::Joint const> JointConstPtr;
+        typedef urdf::LinkConstSharedPtr LinkConstPtr;
+        typedef urdf::JointConstSharedPtr  JointConstPtr;
 
         // Get the end-effector group its associated mainpulator. We assume
         // that the parent group of an end-effector is a manipulator.
@@ -628,10 +628,10 @@ void URDFLoader::ParseSRDF(urdf::Model const &urdf, srdf::Model const &srdf,
 
         // Get the transform for the collision geometry. Spheres are specified
         // in the collision frame.
-        typedef boost::shared_ptr<urdf::Link const> LinkConstPtr;
+        typedef urdf::LinkConstSharedPtr LinkConstPtr;
         LinkConstPtr const urdf_link = urdf.getLink(spheres.link_);
         BOOST_ASSERT(urdf_link);
-        boost::shared_ptr<urdf::Collision> const collision = urdf_link->collision;
+        urdf::CollisionConstSharedPtr const collision = urdf_link->collision;
         BOOST_ASSERT(collision);
         OpenRAVE::Transform const collision_transform
             = URDFPoseToRaveTransform(collision->origin);

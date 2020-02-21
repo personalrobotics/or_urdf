@@ -28,7 +28,7 @@ std::string getPackageNameFromXML(const std::string& _path)
   if (document.LoadFile(_path.c_str()))
   {
     RAVELOG_WARN("Failed loading package.xml file '%s': %s\n",
-           _path.c_str(), document.GetErrorStr1());
+           _path.c_str(), document.ErrorStr());
     return "";
   }
 
